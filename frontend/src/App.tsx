@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import FloorPlanMap from './components/FloorPlanMap';
 import NavigationPanel from './components/NavigationPanel';
 import api from './services/api';
