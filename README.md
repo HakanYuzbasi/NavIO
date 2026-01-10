@@ -56,31 +56,74 @@ NavIO/
 └── docker-compose.yml   # Docker configuration
 ```
 
-## Quick Start
+## 🚀 Quick Start (For Local Deployment)
 
-### Backend Setup
+### Prerequisites
 
+You only need **Docker Desktop** installed:
+- Download from: https://www.docker.com/products/docker-desktop/
+- Available for Windows, Mac, and Linux
+
+### Option 1: One-Command Setup (Recommended)
+
+**Mac/Linux:**
 ```bash
-cd backend
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+./quick-start.sh
 ```
 
-### Frontend Setup
-
+**Windows:**
 ```bash
-cd frontend
-npm install
-npm start
+quick-start.bat
 ```
 
-### Docker Setup
+This script will automatically:
+- ✅ Check if Docker is installed and running
+- ✅ Set up environment variables
+- ✅ Build and start all services (database, backend, frontend)
+- ✅ Show you where to access the application
+
+### Option 2: Manual Docker Setup
 
 ```bash
+# 1. Copy environment file
+cp backend/.env.example backend/.env
+
+# 2. Start all services
 docker-compose up -d
+
+# 3. Access the application
+# Frontend: http://localhost:3000
+# API Docs: http://localhost:8000/docs
 ```
+
+### Option 3: Manual Setup (Without Docker)
+
+See the complete guide: **[DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md)**
+
+---
+
+### 📍 Access Your Application
+
+Once running, open these URLs:
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| **Frontend** | http://localhost:3000 | User interface |
+| **API Swagger Docs** | http://localhost:8000/docs | Interactive API testing |
+| **API ReDoc** | http://localhost:8000/redoc | Alternative API docs |
+
+### 🛑 Stop the Application
+
+```bash
+docker-compose down
+```
+
+### 📚 Need More Help?
+
+- **Complete Deployment Guide**: [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md)
+- **Implementation Guide**: [docs/IMPLEMENTATION_GUIDE.md](./docs/IMPLEMENTATION_GUIDE.md)
+- **Architecture Overview**: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
+- **Coordinate System**: [docs/COORDINATE_SYSTEM.md](./docs/COORDINATE_SYSTEM.md)
 
 ## API Documentation
 
