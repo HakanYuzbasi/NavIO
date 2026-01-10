@@ -2,6 +2,39 @@
 
 NavIO is a Progressive Web App (PWA) for indoor navigation and wayfinding. It enables administrators to upload floor plans, create walkable paths, and allows users to navigate using QR code anchors.
 
+---
+
+## 🎯 **MVP Food Hall Demo**
+
+**Value Proposition:** *"Help visitors find booths in seconds"*
+
+We've created a **working demo** featuring a real food hall with 31 vendor booths. Try the complete navigation experience!
+
+### Quick Demo Setup
+
+**Mac/Linux:**
+```bash
+./setup-demo.sh
+```
+
+**Windows:**
+```bash
+setup-demo.bat
+```
+
+This will:
+- ✅ Start NavIO services
+- ✅ Populate a food hall with 31 booths
+- ✅ Create navigation graph with 11 nodes
+- ✅ Set up 5 QR code anchors
+- ✅ Enable A* pathfinding
+
+**Then open**: http://localhost:3000
+
+📖 **Full Demo Guide**: [MVP_DEMO_GUIDE.md](./MVP_DEMO_GUIDE.md)
+
+---
+
 ## Features
 
 - **PWA Architecture**: No native app downloads required
