@@ -16,20 +16,27 @@ logger = logging.getLogger(__name__)
 class BoothDetector:
     """Detects booths/rooms from floor plan images using computer vision."""
 
-    def __init__(self, min_booth_area: int = 1000, max_booth_area: int = 50000):
+    def __init__(self, min_booth_area: int = 300, max_booth_area: int = 100000):
         """
         Initialize booth detector.
 
         Args:
-            min_booth_area: Minimum area (pixels) for a valid booth
-            max_booth_area: Maximum area (pixels) for a valid booth
+            min_booth_area: Minimum area (pixels) for a valid booth (default: 300)
+            max_booth_area: Maximum area (pixels) for a valid booth (default: 100000)
+
+        Note: Adjust if needed based on your floor plan scale:
+        - Small booths/kiosks: min ~200-500
+        - Medium booths: ~1000-10000
+        - Large booths/rooms: ~10000-100000
         """
         self.min_booth_area = min_booth_area
         self.max_booth_area = max_booth_area
+        logger.info(f"BoothDetector initialized with area range: {min_booth_area}-{max_booth_area}")
 
     def detect_booths(self, image_path: str) -> List[Dict]:
         """
         Detect booth locations from a floor plan image.
+        Works with WHITE booths on COLORED backgrounds.
 
         Args:
             image_path: Path to the floor plan image
@@ -49,9 +56,14 @@ class BoothDetector:
             # Convert to grayscale
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-            # Apply threshold to get binary image
-            # Invert so booths are white on black background
-            _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
+            # For WHITE booths on COLORED backgrounds, use regular threshold
+            # This keeps white areas (booths) as white
+            _, binary = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
+
+            # Clean up noise with morphological operations
+            kernel = np.ones((3, 3), np.uint8)
+            binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
+            binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
 
             # Find contours (booth boundaries)
             contours, _ = cv2.findContours(
@@ -60,41 +72,51 @@ class BoothDetector:
                 cv2.CONTOUR_APPROX_SIMPLE
             )
 
+            logger.info(f"Found {len(contours)} total contours in image")
+
             booths = []
             booth_number = 1
+            filtered_by_size = 0
+            filtered_by_aspect = 0
 
             for contour in contours:
                 # Calculate area
                 area = cv2.contourArea(contour)
 
-                # Filter by size
-                if self.min_booth_area < area < self.max_booth_area:
-                    # Get bounding rectangle
-                    x, y, w, h = cv2.boundingRect(contour)
+                # Filter by size (adjust for your floor plan scale)
+                if not (self.min_booth_area < area < self.max_booth_area):
+                    filtered_by_size += 1
+                    continue
 
-                    # Calculate center point (in pixel coordinates)
-                    center_x = x + w // 2
-                    center_y = height - (y + h // 2)  # Flip Y for our coordinate system
+                # Get bounding rectangle
+                x, y, w, h = cv2.boundingRect(contour)
 
-                    # Check if booth is reasonably rectangular
-                    aspect_ratio = float(w) / h if h > 0 else 0
-                    if 0.3 < aspect_ratio < 3.0:  # Reasonable booth proportions
-                        booths.append({
-                            'name': f'Booth {booth_number}',
-                            'x': center_x,
-                            'y': center_y,
-                            'width': w,
-                            'height': h,
-                            'area': area,
-                            'category': 'booth',
-                            'description': f'Automatically detected booth #{booth_number}'
-                        })
-                        booth_number += 1
+                # Calculate center point (in pixel coordinates)
+                center_x = x + w // 2
+                center_y = height - (y + h // 2)  # Flip Y for our coordinate system
 
-            # Sort booths by position (left to right, top to bottom)
+                # Check if booth is reasonably rectangular
+                aspect_ratio = float(w) / h if h > 0 else 0
+                if not (0.2 < aspect_ratio < 5.0):  # Allow wider range
+                    filtered_by_aspect += 1
+                    continue
+
+                booths.append({
+                    'name': f'Booth {booth_number}',
+                    'x': center_x,
+                    'y': center_y,
+                    'width': w,
+                    'height': h,
+                    'area': area,
+                    'category': 'booth',
+                    'description': f'Automatically detected booth #{booth_number}'
+                })
+                booth_number += 1
+
+            # Sort booths by position (top to bottom, left to right)
             booths.sort(key=lambda b: (-b['y'], b['x']))
 
-            logger.info(f"Detected {len(booths)} booths from {image_path}")
+            logger.info(f"Detection complete: {len(booths)} booths, {filtered_by_size} filtered by size, {filtered_by_aspect} filtered by aspect ratio")
             return booths
 
         except Exception as e:
@@ -103,10 +125,9 @@ class BoothDetector:
 
     def detect_with_grid_analysis(self, image_path: str) -> List[Dict]:
         """
-        Advanced detection using grid analysis for more accurate booth identification.
+        Advanced detection using grid analysis for white booths on colored backgrounds.
 
-        This method analyzes the floor plan as a grid and identifies
-        individual booth cells based on wall/line detection.
+        This method directly detects white rectangular areas.
         """
         try:
             img = cv2.imread(image_path)
@@ -116,17 +137,22 @@ class BoothDetector:
             height, width = img.shape[:2]
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-            # Edge detection to find walls
-            edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+            # Threshold to get white booths
+            _, binary = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
 
-            # Dilate edges to connect nearby lines
-            kernel = np.ones((3, 3), np.uint8)
-            dilated = cv2.dilate(edges, kernel, iterations=1)
+            # Morphological operations to clean up and separate booths
+            kernel_close = np.ones((5, 5), np.uint8)
+            kernel_open = np.ones((3, 3), np.uint8)
 
-            # Find contours from edges
-            contours, _ = cv2.findContours(
-                dilated,
-                cv2.RETR_TREE,
+            # Close small gaps within booths
+            binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel_close, iterations=2)
+            # Remove small noise
+            binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel_open, iterations=1)
+
+            # Find individual booth contours
+            contours, hierarchy = cv2.findContours(
+                binary,
+                cv2.RETR_CCOMP,  # Get both external and internal contours
                 cv2.CONTOUR_APPROX_SIMPLE
             )
 
@@ -134,7 +160,11 @@ class BoothDetector:
             booth_number = 1
 
             # Process each contour
-            for contour in contours:
+            for i, contour in enumerate(contours):
+                # Skip if this is a hole (internal contour)
+                if hierarchy[0][i][3] != -1:  # Has a parent
+                    continue
+
                 area = cv2.contourArea(contour)
 
                 if self.min_booth_area < area < self.max_booth_area:
@@ -149,23 +179,22 @@ class BoothDetector:
                     center_x = x + w // 2
                     center_y = height - (y + h // 2)
 
-                    # Check if roughly rectangular (4-6 sides)
-                    if 4 <= len(approx) <= 6:
-                        aspect_ratio = float(w) / h if h > 0 else 0
+                    # More lenient aspect ratio for varied booth shapes
+                    aspect_ratio = float(w) / h if h > 0 else 0
 
-                        if 0.3 < aspect_ratio < 3.0:
-                            booths.append({
-                                'name': f'Booth {booth_number}',
-                                'x': center_x,
-                                'y': center_y,
-                                'width': w,
-                                'height': h,
-                                'area': area,
-                                'category': 'booth',
-                                'description': f'Auto-detected booth #{booth_number}',
-                                'corners': len(approx)
-                            })
-                            booth_number += 1
+                    if 0.2 < aspect_ratio < 5.0:
+                        booths.append({
+                            'name': f'Booth {booth_number}',
+                            'x': center_x,
+                            'y': center_y,
+                            'width': w,
+                            'height': h,
+                            'area': area,
+                            'category': 'booth',
+                            'description': f'Auto-detected booth #{booth_number}',
+                            'corners': len(approx)
+                        })
+                        booth_number += 1
 
             # Sort by position
             booths.sort(key=lambda b: (-b['y'], b['x']))
