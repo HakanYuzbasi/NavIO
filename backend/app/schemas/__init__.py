@@ -8,7 +8,7 @@ from .node import NodeCreate, NodeUpdate, NodeResponse
 from .edge import EdgeCreate, EdgeUpdate, EdgeResponse
 from .poi import POICreate, POIUpdate, POIResponse
 from .qr_anchor import QRAnchorCreate, QRAnchorUpdate, QRAnchorResponse
-from .route import RouteRequest, RouteResponse, RoutePreferences
+from .route import RouteRequest, RouteResponse, RoutePreferences, Coordinate, RouteInstruction
 from .qr_scan import QRScanRequest, QRScanResponse
 
 __all__ = [
@@ -31,6 +31,8 @@ __all__ = [
     "RouteRequest",
     "RouteResponse",
     "RoutePreferences",
+    "Coordinate",
+    "RouteInstruction",
     "QRScanRequest",
     "QRScanResponse",
 ]
