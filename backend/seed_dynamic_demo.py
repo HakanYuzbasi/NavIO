@@ -323,7 +323,7 @@ def seed_floor_plan(db: Session, config: Dict, demo_dir: str):
             y=y,
             icon="restaurant" if booth['category'] != "event" else "event",
             searchable=True,
-            metadata={
+            custom_metadata={
                 "booth_number": str(i),
                 "vendor_type": booth["category"]
             }

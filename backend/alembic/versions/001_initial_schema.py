@@ -77,7 +77,7 @@ def upgrade() -> None:
         sa.Column('y', sa.Float(), nullable=False),
         sa.Column('icon', sa.String(100), nullable=False),
         sa.Column('searchable', sa.Boolean(), nullable=False),
-        sa.Column('metadata', postgresql.JSONB(), nullable=True),
+        sa.Column('custom_metadata', postgresql.JSONB(), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.Column('updated_at', sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(['floor_plan_id'], ['floor_plans.id'], ondelete='CASCADE'),

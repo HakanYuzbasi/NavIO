@@ -12,7 +12,7 @@ class POIBase(BaseModel):
     y: float
     icon: str = Field(default="marker", max_length=100)
     searchable: bool = True
-    metadata: Optional[Dict[str, Any]] = None
+    custom_metadata: Optional[Dict[str, Any]] = None
 
 
 class POICreate(POIBase):
@@ -28,7 +28,7 @@ class POIUpdate(BaseModel):
     y: Optional[float] = None
     icon: Optional[str] = Field(None, max_length=100)
     searchable: Optional[bool] = None
-    metadata: Optional[Dict[str, Any]] = None
+    custom_metadata: Optional[Dict[str, Any]] = None
     node_id: Optional[UUID] = None
 
 

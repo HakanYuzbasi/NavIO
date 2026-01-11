@@ -181,7 +181,7 @@ def create_food_hall_demo(db: Session):
             y=booth["y"],
             icon="restaurant",
             searchable=True,
-            metadata={
+            custom_metadata={
                 "booth_number": str(booth["num"]),
                 "vendor_type": booth["category"],
                 "floor": "main"

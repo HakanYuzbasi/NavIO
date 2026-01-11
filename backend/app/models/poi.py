@@ -18,7 +18,7 @@ class POI(BaseModel):
     y = Column(Float, nullable=False)
     icon = Column(String(100), default="marker")
     searchable = Column(Boolean, default=True)
-    metadata = Column(JSONB, nullable=True)  # Custom attributes
+    custom_metadata = Column(JSONB, nullable=True)  # Custom attributes (renamed from 'metadata' to avoid SQLAlchemy conflict)
 
     # Relationships
     floor_plan = relationship("FloorPlan", back_populates="pois")
