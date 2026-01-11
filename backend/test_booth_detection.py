@@ -185,7 +185,7 @@ def analyze_floor_plan(image_path: str) -> Optional[Dict]:
 
 def test_booth_detection_service(image_path: str) -> Optional[List[Dict]]:
     """
-    Test the BoothDetector service directly.
+    Test the BoothDetector service directly with all detection modes.
 
     Args:
         image_path: Path to floor plan image
@@ -193,7 +193,7 @@ def test_booth_detection_service(image_path: str) -> Optional[List[Dict]]:
     Returns:
         List of detected booths, or None if detection fails
     """
-    print(f"\nTesting BoothDetector service on: {image_path}")
+    print(f"\nTesting AdaptiveBoothDetector on: {image_path}")
     print("=" * 60)
 
     if not os.path.exists(image_path):
@@ -201,37 +201,72 @@ def test_booth_detection_service(image_path: str) -> Optional[List[Dict]]:
         return None
 
     try:
-        from app.services.booth_detection import BoothDetector, auto_detect_booths
+        from app.services.booth_detection import (
+            AdaptiveBoothDetector,
+            auto_detect_booths,
+            analyze_floor_plan
+        )
 
-        # Test basic detection
-        print("\n1. Basic detection method:")
-        detector = BoothDetector()
-        basic_booths = detector.detect_booths(image_path)
+        # First, analyze the image to understand its characteristics
+        print("\n1. Image Analysis (Auto-detection of floor plan type):")
+        analysis = analyze_floor_plan(image_path)
+        if analysis:
+            print(f"   Dimensions: {analysis['width']}x{analysis['height']}")
+            print(f"   Brightness: {analysis['mean_brightness']:.1f} +/- {analysis['std_brightness']:.1f}")
+            print(f"   White ratio: {analysis['white_ratio']:.1%}")
+            print(f"   Edge density: {analysis['edge_density']:.1%}")
+            print(f"   Recommended mode: {analysis['recommended_mode']}")
+            print(f"   Optimal threshold: {analysis['optimal_threshold']}")
+            print(f"   Is inverted: {analysis['is_inverted']}")
+            print(f"   >> {analysis['recommendation']}")
+
+        # Test adaptive detector
+        detector = AdaptiveBoothDetector()
+
+        # Test basic detection (white on colored)
+        print("\n2. Basic detection (white on colored):")
+        basic_booths = detector._detect_white_on_colored(image_path, 180)
         print(f"   Detected: {len(basic_booths)} booths")
 
-        # Test grid analysis
-        print("\n2. Grid analysis method:")
-        grid_booths = detector.detect_with_grid_analysis(image_path)
-        print(f"   Detected: {len(grid_booths)} booths")
+        # Test colored on white detection
+        print("\n3. Inverted detection (colored on white):")
+        if analysis:
+            from app.services.booth_detection import ImageAnalysis, DetectionMode
+            img_analysis = detector.analyze_image(image_path)
+            if img_analysis:
+                inverted_booths = detector._detect_colored_on_white(image_path, img_analysis)
+                print(f"   Detected: {len(inverted_booths)} booths")
 
-        # Test smart categorization
-        print("\n3. Smart categorization method:")
-        smart_booths = detector.detect_with_smart_categorization(image_path)
-        print(f"   Detected: {len(smart_booths)} booths")
+        # Test edge-based detection
+        print("\n4. Edge-based detection:")
+        if analysis:
+            img_analysis = detector.analyze_image(image_path)
+            if img_analysis:
+                edge_booths = detector._detect_edge_based(image_path, img_analysis)
+                print(f"   Detected: {len(edge_booths)} booths")
 
-        if smart_booths:
+        # Test fully adaptive detection (recommended)
+        print("\n5. ADAPTIVE DETECTION (auto-selects best method):")
+        adaptive_booths = detector.detect_adaptive(image_path)
+        print(f"   Detected: {len(adaptive_booths)} booths")
+
+        if adaptive_booths:
             categories = {}
-            for booth in smart_booths:
+            methods = {}
+            for booth in adaptive_booths:
                 cat = booth.get('category', 'unknown')
+                method = booth.get('detection_method', 'unknown')
                 categories[cat] = categories.get(cat, 0) + 1
+                methods[method] = methods.get(method, 0) + 1
             print(f"   Categories: {categories}")
+            print(f"   Detection method used: {methods}")
 
-        # Test convenience function
-        print("\n4. auto_detect_booths function:")
-        auto_booths = auto_detect_booths(image_path, method='smart')
+        # Test convenience function with auto mode
+        print("\n6. auto_detect_booths(method='auto'):")
+        auto_booths = auto_detect_booths(image_path, method='auto')
         print(f"   Detected: {len(auto_booths)} booths")
 
-        return auto_booths
+        return adaptive_booths
 
     except ImportError as e:
         print(f"   Could not import booth detection service: {e}")
@@ -322,14 +357,29 @@ def main():
     for result in results:
         print(f"\n{result['image_path']}:")
         print(f"  Dimensions: {result['width']}x{result['height']}")
+        print(f"  Brightness: {result.get('mean_brightness', 0):.1f}/255")
         print(f"  Contours: {result.get('significant_contours', 0)}")
         print(f"  Booth candidates: {result.get('booth_candidates', 0)}")
         if 'detected_booths' in result:
-            print(f"  Service detected: {len(result['detected_booths'])} booths")
+            booths = result['detected_booths']
+            print(f"  Adaptive detection: {len(booths)} booths")
+            if booths:
+                methods = set(b.get('detection_method', 'unknown') for b in booths)
+                categories = {}
+                for b in booths:
+                    cat = b.get('category', 'unknown')
+                    categories[cat] = categories.get(cat, 0) + 1
+                print(f"  Detection method: {', '.join(methods)}")
+                print(f"  Categories: {categories}")
 
     print("\n" + "=" * 60)
     print("All tests completed successfully!")
     print("=" * 60)
+    print("\nThe adaptive detector automatically:")
+    print("  - Analyzes image brightness and contrast")
+    print("  - Detects if booths are light or dark")
+    print("  - Selects optimal threshold values")
+    print("  - Tries alternative methods if primary fails")
 
     return 0
 
