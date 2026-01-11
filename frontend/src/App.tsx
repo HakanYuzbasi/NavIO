@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import FloorPlanMap from './components/FloorPlanMap';
 import NavigationPanel from './components/NavigationPanel';
+import AdminPanel from './components/AdminPanel';
 import api from './services/api';
 import { FloorPlanWithGraph, RouteResponse } from './types';
 
@@ -10,6 +11,7 @@ function App() {
   const [route, setRoute] = useState<RouteResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
 
   // Load floor plans on mount
   useEffect(() => {
@@ -89,11 +91,32 @@ function App() {
           color: 'white',
           padding: '16px 24px',
           boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
         }}
       >
         <h1 style={{ margin: 0, fontSize: '28px', fontWeight: 'bold' }}>
           NavIO - Indoor Wayfinding
         </h1>
+        <button
+          onClick={() => setShowAdminPanel(true)}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: '#3b82f6',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            fontSize: '14px',
+            fontWeight: 'bold',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          ⚙️ Admin Panel
+        </button>
       </header>
 
       {/* Main Content */}
@@ -204,6 +227,18 @@ function App() {
           )}
         </main>
       </div>
+
+      {/* Admin Panel */}
+      {showAdminPanel && (
+        <AdminPanel
+          selectedFloorPlanId={selectedFloorPlan?.id}
+          onClose={() => {
+            setShowAdminPanel(false);
+            // Reload floor plans to reflect any changes
+            loadFloorPlans();
+          }}
+        />
+      )}
     </div>
   );
 }

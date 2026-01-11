@@ -51,8 +51,11 @@ const FloorPlanMap: React.FC<FloorPlanMapProps> = ({
       attributionControl: false,
     });
 
-    // Add floor plan image overlay
-    L.imageOverlay(floorPlan.image_url, bounds).addTo(map);
+    // Add floor plan image overlay (ensure it points to backend)
+    const imageUrl = floorPlan.image_url.startsWith('http')
+      ? floorPlan.image_url
+      : `http://localhost:8000${floorPlan.image_url}`;
+    L.imageOverlay(imageUrl, bounds).addTo(map);
 
     // Fit map to bounds
     map.fitBounds(bounds);
@@ -154,25 +157,42 @@ const FloorPlanMap: React.FC<FloorPlanMapProps> = ({
     floorPlan.pois.forEach((poi) => {
       const coords = pixelToLeaflet(poi.x, poi.y, floorPlan.image_height);
 
-      // Create custom icon for POI
+      // Create custom icon for POI with permanent label
       const icon = L.divIcon({
         className: 'custom-poi-marker',
-        html: `<div style="
-          background-color: #ef4444;
-          border: 2px solid white;
-          border-radius: 50%;
-          width: 20px;
-          height: 20px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: white;
-          font-weight: bold;
-          font-size: 12px;
-          box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-        ">📍</div>`,
-        iconSize: [20, 20],
-        iconAnchor: [10, 10],
+        html: `
+          <div style="text-align: center; position: relative;">
+            <div style="
+              background-color: #ef4444;
+              border: 2px solid white;
+              border-radius: 50%;
+              width: 20px;
+              height: 20px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              color: white;
+              font-weight: bold;
+              font-size: 12px;
+              box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+              margin: 0 auto;
+            ">📍</div>
+            <div style="
+              background-color: rgba(239, 68, 68, 0.95);
+              color: white;
+              padding: 4px 8px;
+              border-radius: 4px;
+              font-size: 11px;
+              font-weight: bold;
+              white-space: nowrap;
+              margin-top: 4px;
+              box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+              border: 1px solid white;
+            ">${poi.name}</div>
+          </div>
+        `,
+        iconSize: [120, 60],
+        iconAnchor: [60, 10],
       });
 
       const marker = L.marker([coords.lat, coords.lng], { icon });
