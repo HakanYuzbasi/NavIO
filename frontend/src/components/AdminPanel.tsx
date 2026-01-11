@@ -10,6 +10,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../services/api';
 import { FloorPlan, POI, Node, Edge } from '../types';
+import VisualPOIEditor from './VisualPOIEditor';
 
 interface AdminPanelProps {
   selectedFloorPlanId?: string;
@@ -23,10 +24,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ selectedFloorPlanId, onClose })
   const [pois, setPois] = useState<POI[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [showVisualEditor, setShowVisualEditor] = useState(false);
 
   // Load floor plans
   useEffect(() => {
@@ -57,45 +58,35 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ selectedFloorPlanId, onClose })
   const loadPOIs = async () => {
     if (!selectedFloorPlan) return;
     try {
-      setLoading(true);
       const data = await api.getPOIsByFloorPlan(selectedFloorPlan, false);
       setPois(data);
     } catch (err) {
       setError('Failed to load POIs');
-    } finally {
-      setLoading(false);
     }
   };
 
   const loadNodes = async () => {
     if (!selectedFloorPlan) return;
     try {
-      setLoading(true);
       const data = await api.getNodesByFloorPlan(selectedFloorPlan);
       setNodes(data);
     } catch (err) {
       setError('Failed to load nodes');
-    } finally {
-      setLoading(false);
     }
   };
 
   const loadEdges = async () => {
     if (!selectedFloorPlan) return;
     try {
-      setLoading(true);
       const data = await api.getEdgesByFloorPlan(selectedFloorPlan);
       setEdges(data);
     } catch (err) {
       setError('Failed to load edges');
-    } finally {
-      setLoading(false);
     }
   };
 
   const handleSavePOI = async (poiData: any) => {
     try {
-      setLoading(true);
       if (editingItem && editingItem.id) {
         // Update existing
         await api.updatePOI(editingItem.id, poiData);
@@ -111,27 +102,21 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ selectedFloorPlanId, onClose })
       loadPOIs();
     } catch (err) {
       setError('Failed to save POI');
-    } finally {
-      setLoading(false);
     }
   };
 
   const handleDeletePOI = async (id: string) => {
     if (!window.confirm('Are you sure you want to delete this POI?')) return;
     try {
-      setLoading(true);
       await api.deletePOI(id);
       loadPOIs();
     } catch (err) {
       setError('Failed to delete POI');
-    } finally {
-      setLoading(false);
     }
   };
 
   const handleSaveNode = async (nodeData: any) => {
     try {
-      setLoading(true);
       if (editingItem && editingItem.id) {
         await api.updateNode(editingItem.id, nodeData);
       } else {
@@ -145,21 +130,16 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ selectedFloorPlanId, onClose })
       loadNodes();
     } catch (err) {
       setError('Failed to save node');
-    } finally {
-      setLoading(false);
     }
   };
 
   const handleDeleteNode = async (id: string) => {
     if (!window.confirm('Are you sure you want to delete this node?')) return;
     try {
-      setLoading(true);
       await api.deleteNode(id);
       loadNodes();
     } catch (err) {
       setError('Failed to delete node');
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -287,24 +267,40 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ selectedFloorPlanId, onClose })
           {/* POIs Tab */}
           {activeTab === 'pois' && (
             <div>
-              <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3>Points of Interest (Booths, Rooms, Locations)</h3>
-                <button
-                  onClick={() => {
-                    setIsAdding(true);
-                    setEditingItem({ name: '', description: '', category: '', x: 0, y: 0 });
-                  }}
-                  style={{
-                    padding: '8px 16px',
-                    backgroundColor: '#10b981',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  + Add New POI
-                </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    onClick={() => setShowVisualEditor(true)}
+                    style={{
+                      padding: '8px 16px',
+                      backgroundColor: '#8b5cf6',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontWeight: 'bold',
+                    }}
+                  >
+                    🎯 Visual Editor
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsAdding(true);
+                      setEditingItem({ name: '', description: '', category: '', x: 0, y: 0 });
+                    }}
+                    style={{
+                      padding: '8px 16px',
+                      backgroundColor: '#10b981',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    + Add New POI
+                  </button>
+                </div>
               </div>
 
               {(isAdding || editingItem) && activeTab === 'pois' ? (
@@ -486,6 +482,18 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ selectedFloorPlanId, onClose })
           )}
         </div>
       </div>
+
+      {/* Visual POI Editor */}
+      {showVisualEditor && selectedFloorPlan && (
+        <VisualPOIEditor
+          floorPlanId={selectedFloorPlan}
+          onClose={() => {
+            setShowVisualEditor(false);
+            // Reload POIs to reflect any changes
+            loadPOIs();
+          }}
+        />
+      )}
     </div>
   );
 };

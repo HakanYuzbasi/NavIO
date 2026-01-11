@@ -17,6 +17,8 @@ interface FloorPlanMapProps {
   showNodes?: boolean;
   showEdges?: boolean;
   showPOIs?: boolean;
+  placementMode?: boolean;
+  onPOIDrag?: (poiId: string, x: number, y: number) => void;
 }
 
 const FloorPlanMap: React.FC<FloorPlanMapProps> = ({
@@ -26,6 +28,8 @@ const FloorPlanMap: React.FC<FloorPlanMapProps> = ({
   showNodes = true,
   showEdges = true,
   showPOIs = true,
+  placementMode = false,
+  onPOIDrag,
 }) => {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -79,6 +83,11 @@ const FloorPlanMap: React.FC<FloorPlanMapProps> = ({
         const y = floorPlan.image_height - lat;
         onMapClick(x, y);
       });
+    }
+
+    // Set cursor style based on placement mode
+    if (placementMode) {
+      map.getContainer().style.cursor = 'crosshair';
     }
 
     mapRef.current = map;
@@ -195,7 +204,10 @@ const FloorPlanMap: React.FC<FloorPlanMapProps> = ({
         iconAnchor: [60, 10],
       });
 
-      const marker = L.marker([coords.lat, coords.lng], { icon });
+      const marker = L.marker([coords.lat, coords.lng], {
+        icon,
+        draggable: placementMode || !!onPOIDrag,
+      });
 
       const popupContent = `
         <div style="min-width: 150px;">
@@ -206,9 +218,20 @@ const FloorPlanMap: React.FC<FloorPlanMapProps> = ({
       `;
 
       marker.bindPopup(popupContent);
+
+      // Handle POI drag event
+      if (onPOIDrag) {
+        marker.on('dragend', (e: L.DragEndEvent) => {
+          const { lat, lng } = e.target.getLatLng();
+          const x = lng;
+          const y = floorPlan.image_height - lat;
+          onPOIDrag(poi.id, x, y);
+        });
+      }
+
       marker.addTo(layerGroups.pois);
     });
-  }, [floorPlan, layerGroups, showPOIs]);
+  }, [floorPlan, layerGroups, showPOIs, placementMode, onPOIDrag]);
 
   // Render route
   useEffect(() => {
