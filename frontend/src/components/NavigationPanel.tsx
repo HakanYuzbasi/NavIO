@@ -24,7 +24,6 @@ interface NavigationPanelProps {
 
 const NavigationPanel: React.FC<NavigationPanelProps> = ({
   pois,
-  nodes,
   currentLocation,
   onCalculateRoute,
   route,
