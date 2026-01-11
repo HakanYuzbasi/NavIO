@@ -37,9 +37,9 @@ echo [OK] NavIO is running
 echo.
 
 REM Seed the database
-echo Setting up Food Hall demo data...
+echo Setting up Food Hall demo data (dynamic multi-floor)...
 echo.
-docker-compose exec -T backend python seed_food_hall.py
+docker-compose exec -T backend python seed_dynamic_demo.py
 
 echo.
 echo ======================================

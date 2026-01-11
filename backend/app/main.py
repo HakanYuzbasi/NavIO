@@ -22,7 +22,7 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -30,9 +30,11 @@ app.add_middleware(
 
 # Create upload directory if it doesn't exist
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+os.makedirs("./public/demo", exist_ok=True)
 
-# Mount static files for uploads
+# Mount static files for uploads and demo
 app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
+app.mount("/demo", StaticFiles(directory="./public/demo"), name="demo")
 
 # Include API routes
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
