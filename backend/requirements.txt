@@ -18,6 +18,8 @@ networkx==3.2.1
 
 # Image processing
 Pillow==10.1.0
+opencv-python==4.8.1.78
+numpy==1.24.3
 
 # QR Code generation
 qrcode[pil]==7.4.2
