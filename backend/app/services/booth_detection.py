@@ -69,7 +69,7 @@ class BoothDetector:
             contours, _ = cv2.findContours(
                 binary,
                 cv2.RETR_EXTERNAL,
-                cv2.CONTOUR_APPROX_SIMPLE
+                cv2.CHAIN_APPROX_SIMPLE
             )
 
             logger.info(f"Found {len(contours)} total contours in image")
@@ -153,7 +153,7 @@ class BoothDetector:
             contours, hierarchy = cv2.findContours(
                 binary,
                 cv2.RETR_CCOMP,  # Get both external and internal contours
-                cv2.CONTOUR_APPROX_SIMPLE
+                cv2.CHAIN_APPROX_SIMPLE
             )
 
             booths = []
