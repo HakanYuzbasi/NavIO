@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.database import check_database_health
 from app.api.routes import router as api_router
+from app.api.detection import router as detection_router
 
 
 def setup_logging() -> None:
@@ -111,6 +112,7 @@ app.mount("/demo", StaticFiles(directory="./public/demo"), name="demo")
 
 # Include API routes
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+app.include_router(detection_router, prefix=settings.API_V1_PREFIX, tags=["detection"])
 
 
 @app.get("/")
