@@ -466,3 +466,103 @@ async def scan_qr_code(scan_request: QRScanRequest, db: Session = Depends(get_db
         ),
         nearby_pois=nearby_pois[:5]  # Return top 5 nearest
     )
+
+
+# ============================================================================
+# Automatic Booth Detection Routes
+# ============================================================================
+
+@router.post("/floor-plans/{floor_plan_id}/detect-booths")
+async def detect_booths_from_image(
+    floor_plan_id: UUID,
+    method: str = "smart",
+    auto_create: bool = True,
+    db: Session = Depends(get_db)
+):
+    """
+    Automatically detect booths from floor plan image using computer vision.
+    
+    Args:
+        floor_plan_id: ID of the floor plan
+        method: Detection method (basic, grid, smart)
+        auto_create: If True, automatically create POIs for detected booths
+    
+    Returns:
+        Detection results with booth locations
+    """
+    from app.services.booth_detection import auto_detect_booths
+    import os
+    
+    # Get floor plan
+    floor_plan = db.query(FloorPlan).filter(FloorPlan.id == floor_plan_id).first()
+    if not floor_plan:
+        raise HTTPException(status_code=404, detail="Floor plan not found")
+    
+    # Get image path
+    image_path = floor_plan.image_url.replace("/demo/", "./public/demo/")
+    
+    if not os.path.exists(image_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Floor plan image not found: {image_path}"
+        )
+    
+    try:
+        # Run detection
+        booths = auto_detect_booths(image_path, method=method)
+        
+        booths_created = 0
+        
+        if auto_create and booths:
+            # Create POIs for detected booths
+            for booth in booths:
+                poi = POI(
+                    floor_plan_id=floor_plan_id,
+                    name=booth['name'],
+                    description=booth.get('description', ''),
+                    category=booth.get('category', 'booth'),
+                    x=booth['x'],
+                    y=booth['y'],
+                    searchable=True
+                )
+                db.add(poi)
+                booths_created += 1
+            
+            db.commit()
+        
+        return {
+            "success": True,
+            "floor_plan_id": str(floor_plan_id),
+            "booths_detected": len(booths),
+            "booths_created": booths_created,
+            "booths": booths,
+            "method": method,
+            "message": f"Successfully detected {len(booths)} booths using {method} method"
+        }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error detecting booths: {str(e)}"
+        )
+
+
+@router.delete("/floor-plans/{floor_plan_id}/clear-pois")
+async def clear_all_pois(
+    floor_plan_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Clear all POIs from a floor plan (useful before re-detecting)."""
+    floor_plan = db.query(FloorPlan).filter(FloorPlan.id == floor_plan_id).first()
+    if not floor_plan:
+        raise HTTPException(status_code=404, detail="Floor plan not found")
+    
+    # Delete all POIs
+    count = db.query(POI).filter(POI.floor_plan_id == floor_plan_id).delete()
+    db.commit()
+    
+    return {
+        "success": True,
+        "deleted_count": count,
+        "message": f"Deleted {count} POIs from floor plan"
+    }
