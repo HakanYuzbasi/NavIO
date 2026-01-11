@@ -246,7 +246,7 @@ def seed_floor_plan(db: Session, config: Dict, demo_dir: str):
         image_url=f"/demo/{config['image']}",
         image_width=width,
         image_height=height,
-        organization_id="demo-org-001"
+        organization_id=None  # Demo mode - no organization
     )
     db.add(floor_plan)
     db.flush()

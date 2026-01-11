@@ -40,7 +40,7 @@ def create_food_hall_demo(db: Session):
         image_url="/demo/food-hall-floorplan.png",
         image_width=780,
         image_height=560,
-        organization_id="demo-org-001"
+        organization_id=None  # Demo mode - no organization
     )
     db.add(floor_plan)
     db.flush()
