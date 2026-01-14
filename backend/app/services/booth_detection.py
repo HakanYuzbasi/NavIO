@@ -1,641 +1,364 @@
 """
-Adaptive Booth Detection Service
+Accurate Booth Detection Service
 
-Uses advanced computer vision to automatically detect booth/room locations
-from floor plan images regardless of color scheme, size, or style.
+Detects individual booth cells in floor plans by:
+1. Finding white rectangular areas on colored backgrounds
+2. Detecting internal grid lines/divisions within booth groups
+3. Creating POIs at the center of each individual cell
 
-Features:
-- Automatic image analysis to determine optimal detection strategy
-- Adaptive thresholding for any color scheme
-- Multiple detection modes (white on colored, colored on white, edge-based)
-- Automatic mode selection based on image characteristics
-- Configurable parameters with intelligent defaults
+This handles floor plans where booths are subdivided into smaller cells.
 """
 import cv2
 import numpy as np
-from PIL import Image
 from typing import List, Dict, Tuple, Optional
-from dataclasses import dataclass
-from enum import Enum
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class DetectionMode(Enum):
-    """Detection modes for different floor plan styles."""
-    WHITE_ON_COLORED = "white_on_colored"  # White booths on colored background
-    COLORED_ON_WHITE = "colored_on_white"  # Colored booths on white background
-    EDGE_BASED = "edge_based"  # Use edge detection for complex images
-    ADAPTIVE = "adaptive"  # Automatically select best mode
-    AUTO = "auto"  # Full automatic analysis
-
-
-@dataclass
-class ImageAnalysis:
-    """Results of floor plan image analysis."""
-    width: int
-    height: int
-    mean_brightness: float
-    std_brightness: float
-    white_ratio: float  # Ratio of very bright pixels
-    dark_ratio: float  # Ratio of dark pixels
-    edge_density: float  # How many edges are detected
-    recommended_mode: DetectionMode
-    optimal_threshold: int
-    is_inverted: bool  # True if booths are darker than background
-
-
-class AdaptiveBoothDetector:
+def detect_booth_cells(image_path: str) -> List[Dict]:
     """
-    Advanced booth detector with automatic adaptation to any floor plan style.
+    Detect individual booth cells in a floor plan.
 
-    Automatically analyzes images to determine:
-    - Whether booths are light or dark relative to background
-    - Optimal threshold values
-    - Best detection strategy
-    """
-
-    def __init__(
-        self,
-        min_booth_area: int = 300,
-        max_booth_area: int = 100000,
-        min_aspect_ratio: float = 0.15,
-        max_aspect_ratio: float = 6.0
-    ):
-        """
-        Initialize adaptive booth detector.
-
-        Args:
-            min_booth_area: Minimum area (pixels) for a valid booth
-            max_booth_area: Maximum area (pixels) for a valid booth
-            min_aspect_ratio: Minimum width/height ratio
-            max_aspect_ratio: Maximum width/height ratio
-        """
-        self.min_booth_area = min_booth_area
-        self.max_booth_area = max_booth_area
-        self.min_aspect_ratio = min_aspect_ratio
-        self.max_aspect_ratio = max_aspect_ratio
-        logger.info(
-            f"AdaptiveBoothDetector initialized: area={min_booth_area}-{max_booth_area}, "
-            f"aspect={min_aspect_ratio}-{max_aspect_ratio}"
-        )
-
-    def analyze_image(self, image_path: str) -> Optional[ImageAnalysis]:
-        """
-        Analyze floor plan image to determine optimal detection parameters.
-
-        Args:
-            image_path: Path to the floor plan image
-
-        Returns:
-            ImageAnalysis with recommended parameters, or None if analysis fails
-        """
-        try:
-            img = cv2.imread(image_path)
-            if img is None:
-                raise ValueError(f"Could not read image: {image_path}")
-
-            height, width = img.shape[:2]
-            total_pixels = width * height
-
-            # Convert to grayscale
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-            # Calculate brightness statistics
-            mean_brightness = np.mean(gray)
-            std_brightness = np.std(gray)
-
-            # Calculate pixel distribution
-            white_threshold = 200
-            dark_threshold = 80
-            white_ratio = np.sum(gray > white_threshold) / total_pixels
-            dark_ratio = np.sum(gray < dark_threshold) / total_pixels
-
-            # Calculate edge density using Canny
-            edges = cv2.Canny(gray, 50, 150)
-            edge_density = np.sum(edges > 0) / total_pixels
-
-            # Determine if image is inverted (booths darker than background)
-            # If most of image is white, booths are likely colored/dark
-            is_inverted = white_ratio > 0.6
-
-            # Determine optimal threshold
-            if is_inverted:
-                # For colored booths on white background
-                # Find threshold that separates booths from white background
-                optimal_threshold = int(mean_brightness - std_brightness * 0.5)
-                optimal_threshold = max(100, min(200, optimal_threshold))
-            else:
-                # For white booths on colored background
-                optimal_threshold = int(mean_brightness + std_brightness * 0.3)
-                optimal_threshold = max(150, min(220, optimal_threshold))
-
-            # Determine recommended mode
-            if edge_density > 0.15:
-                # Complex image with many edges - use edge-based detection
-                recommended_mode = DetectionMode.EDGE_BASED
-            elif is_inverted:
-                recommended_mode = DetectionMode.COLORED_ON_WHITE
-            else:
-                recommended_mode = DetectionMode.WHITE_ON_COLORED
-
-            analysis = ImageAnalysis(
-                width=width,
-                height=height,
-                mean_brightness=mean_brightness,
-                std_brightness=std_brightness,
-                white_ratio=white_ratio,
-                dark_ratio=dark_ratio,
-                edge_density=edge_density,
-                recommended_mode=recommended_mode,
-                optimal_threshold=optimal_threshold,
-                is_inverted=is_inverted
-            )
-
-            logger.info(
-                f"Image analysis: {width}x{height}, brightness={mean_brightness:.1f}±{std_brightness:.1f}, "
-                f"white={white_ratio:.1%}, edges={edge_density:.1%}, "
-                f"mode={recommended_mode.value}, threshold={optimal_threshold}"
-            )
-
-            return analysis
-
-        except Exception as e:
-            logger.error(f"Error analyzing image: {e}")
-            return None
-
-    def detect_adaptive(self, image_path: str) -> List[Dict]:
-        """
-        Fully adaptive booth detection that automatically selects the best strategy.
-
-        Args:
-            image_path: Path to floor plan image
-
-        Returns:
-            List of detected booths
-        """
-        # Analyze image first
-        analysis = self.analyze_image(image_path)
-        if analysis is None:
-            logger.warning("Image analysis failed, falling back to default detection")
-            return self._detect_white_on_colored(image_path, 180)
-
-        logger.info(f"Using detection mode: {analysis.recommended_mode.value}")
-
-        # Select detection method based on analysis
-        if analysis.recommended_mode == DetectionMode.EDGE_BASED:
-            booths = self._detect_edge_based(image_path, analysis)
-        elif analysis.recommended_mode == DetectionMode.COLORED_ON_WHITE:
-            booths = self._detect_colored_on_white(image_path, analysis)
-        else:  # WHITE_ON_COLORED
-            booths = self._detect_white_on_colored(image_path, analysis.optimal_threshold)
-
-        # If primary method found nothing, try alternative methods
-        if not booths:
-            logger.info("Primary detection found no booths, trying alternatives...")
-            booths = self._try_alternative_methods(image_path, analysis)
-
-        return booths
-
-    def _detect_white_on_colored(
-        self,
-        image_path: str,
-        threshold: int = 180
-    ) -> List[Dict]:
-        """Detect white/light booths on colored background."""
-        try:
-            img = cv2.imread(image_path)
-            if img is None:
-                return []
-
-            height, width = img.shape[:2]
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-            # Binary threshold - white areas become white
-            _, binary = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
-
-            return self._extract_booths_from_binary(binary, height, width, "white_on_colored")
-
-        except Exception as e:
-            logger.error(f"Error in white_on_colored detection: {e}")
-            return []
-
-    def _detect_colored_on_white(
-        self,
-        image_path: str,
-        analysis: ImageAnalysis
-    ) -> List[Dict]:
-        """Detect colored/dark booths on white background."""
-        try:
-            img = cv2.imread(image_path)
-            if img is None:
-                return []
-
-            height, width = img.shape[:2]
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-            # Invert threshold - dark areas become white (booths)
-            _, binary = cv2.threshold(gray, analysis.optimal_threshold, 255, cv2.THRESH_BINARY_INV)
-
-            return self._extract_booths_from_binary(binary, height, width, "colored_on_white")
-
-        except Exception as e:
-            logger.error(f"Error in colored_on_white detection: {e}")
-            return []
-
-    def _detect_edge_based(
-        self,
-        image_path: str,
-        analysis: ImageAnalysis
-    ) -> List[Dict]:
-        """Use edge detection for complex floor plans."""
-        try:
-            img = cv2.imread(image_path)
-            if img is None:
-                return []
-
-            height, width = img.shape[:2]
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-            # Apply Gaussian blur to reduce noise
-            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-
-            # Canny edge detection
-            edges = cv2.Canny(blurred, 30, 100)
-
-            # Dilate edges to connect nearby lines
-            kernel = np.ones((3, 3), np.uint8)
-            dilated = cv2.dilate(edges, kernel, iterations=2)
-
-            # Close gaps
-            closed = cv2.morphologyEx(dilated, cv2.MORPH_CLOSE, kernel, iterations=3)
-
-            # Fill enclosed regions
-            # Use flood fill from corners (assuming corners are background)
-            filled = closed.copy()
-            mask = np.zeros((height + 2, width + 2), np.uint8)
-
-            # Flood fill from corners
-            corners = [(0, 0), (width-1, 0), (0, height-1), (width-1, height-1)]
-            for corner in corners:
-                if filled[corner[1], corner[0]] == 0:
-                    cv2.floodFill(filled, mask, corner, 128)
-
-            # Areas that weren't filled are potential booths
-            binary = np.where(filled == 0, 255, 0).astype(np.uint8)
-
-            return self._extract_booths_from_binary(binary, height, width, "edge_based")
-
-        except Exception as e:
-            logger.error(f"Error in edge-based detection: {e}")
-            return []
-
-    def _detect_with_adaptive_threshold(
-        self,
-        image_path: str
-    ) -> List[Dict]:
-        """Use OpenCV adaptive thresholding for varied lighting."""
-        try:
-            img = cv2.imread(image_path)
-            if img is None:
-                return []
-
-            height, width = img.shape[:2]
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-            # Apply adaptive threshold
-            binary = cv2.adaptiveThreshold(
-                gray, 255,
-                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY,
-                blockSize=51,
-                C=10
-            )
-
-            return self._extract_booths_from_binary(binary, height, width, "adaptive_threshold")
-
-        except Exception as e:
-            logger.error(f"Error in adaptive threshold detection: {e}")
-            return []
-
-    def _detect_with_otsu(self, image_path: str) -> List[Dict]:
-        """Use Otsu's method for automatic threshold selection."""
-        try:
-            img = cv2.imread(image_path)
-            if img is None:
-                return []
-
-            height, width = img.shape[:2]
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-            # Otsu's thresholding
-            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-            booths = self._extract_booths_from_binary(binary, height, width, "otsu")
-
-            # If Otsu didn't work well, try inverted
-            if not booths:
-                _, binary_inv = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-                booths = self._extract_booths_from_binary(binary_inv, height, width, "otsu_inv")
-
-            return booths
-
-        except Exception as e:
-            logger.error(f"Error in Otsu detection: {e}")
-            return []
-
-    def _try_alternative_methods(
-        self,
-        image_path: str,
-        analysis: ImageAnalysis
-    ) -> List[Dict]:
-        """Try alternative detection methods when primary fails."""
-        methods = [
-            ("Otsu", lambda: self._detect_with_otsu(image_path)),
-            ("Adaptive", lambda: self._detect_with_adaptive_threshold(image_path)),
-            ("Edge-based", lambda: self._detect_edge_based(image_path, analysis)),
-            ("Inverted white", lambda: self._detect_colored_on_white(image_path, analysis)),
-        ]
-
-        for name, method in methods:
-            logger.info(f"Trying alternative method: {name}")
-            booths = method()
-            if booths:
-                logger.info(f"Alternative method {name} found {len(booths)} booths")
-                return booths
-
-        logger.warning("All detection methods failed")
-        return []
-
-    def _extract_booths_from_binary(
-        self,
-        binary: np.ndarray,
-        height: int,
-        width: int,
-        method_name: str
-    ) -> List[Dict]:
-        """Extract booth locations from binary image."""
-        # Morphological cleanup
-        kernel_close = np.ones((5, 5), np.uint8)
-        kernel_open = np.ones((3, 3), np.uint8)
-
-        # Close small gaps
-        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel_close, iterations=2)
-        # Remove small noise
-        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel_open, iterations=1)
-
-        # Find contours
-        contours, hierarchy = cv2.findContours(
-            binary,
-            cv2.RETR_CCOMP,
-            cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        if hierarchy is None:
-            return []
-
-        booths = []
-        total_area = height * width
-
-        for i, contour in enumerate(contours):
-            # Skip internal contours (holes)
-            if hierarchy[0][i][3] != -1:
-                continue
-
-            area = cv2.contourArea(contour)
-
-            # Dynamic area filtering based on image size
-            min_area = max(self.min_booth_area, total_area * 0.0005)
-            max_area = min(self.max_booth_area, total_area * 0.15)
-
-            if not (min_area < area < max_area):
-                continue
-
-            # Get bounding rectangle
-            x, y, w, h = cv2.boundingRect(contour)
-
-            # Check aspect ratio
-            aspect_ratio = float(w) / h if h > 0 else 0
-            if not (self.min_aspect_ratio < aspect_ratio < self.max_aspect_ratio):
-                continue
-
-            # Calculate center point
-            center_x = x + w // 2
-            center_y = height - (y + h // 2)  # Flip Y for coordinate system
-
-            # Get contour properties
-            peri = cv2.arcLength(contour, True)
-            approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
-
-            booths.append({
-                'x': center_x,
-                'y': center_y,
-                'width': w,
-                'height': h,
-                'area': area,
-                'corners': len(approx),
-                'detection_method': method_name
-            })
-
-        # Sort by position (top to bottom, left to right)
-        booths.sort(key=lambda b: (-b['y'], b['x']))
-
-        # Assign names and categories
-        booths = self._categorize_booths(booths)
-
-        logger.info(f"Method '{method_name}' extracted {len(booths)} booths")
-        return booths
-
-    def _categorize_booths(self, booths: List[Dict]) -> List[Dict]:
-        """Categorize booths by size and assign names."""
-        if not booths:
-            return []
-
-        areas = [b['area'] for b in booths]
-        median_area = np.median(areas)
-
-        booth_counts = {'booth': 0, 'room': 0, 'kiosk': 0}
-
-        for booth in booths:
-            area = booth['area']
-
-            if area > median_area * 2.5:
-                booth_counts['room'] += 1
-                booth['category'] = 'room'
-                booth['name'] = f"Room {booth_counts['room']}"
-                booth['description'] = 'Large space - main area or event space'
-            elif area < median_area * 0.4:
-                booth_counts['kiosk'] += 1
-                booth['category'] = 'kiosk'
-                booth['name'] = f"Kiosk {booth_counts['kiosk']}"
-                booth['description'] = 'Small station or kiosk'
-            else:
-                booth_counts['booth'] += 1
-                booth['category'] = 'booth'
-                booth['name'] = f"Booth {booth_counts['booth']}"
-                booth['description'] = 'Standard vendor booth'
-
-        logger.info(
-            f"Categorized: {booth_counts['room']} rooms, "
-            f"{booth_counts['booth']} booths, {booth_counts['kiosk']} kiosks"
-        )
-
-        return booths
-
-    def visualize_detections(
-        self,
-        image_path: str,
-        booths: List[Dict],
-        output_path: str
-    ) -> None:
-        """Create a visualization of detected booths."""
-        try:
-            img = cv2.imread(image_path)
-            height, width = img.shape[:2]
-
-            # Color map for categories
-            colors = {
-                'room': (255, 0, 0),    # Blue
-                'booth': (0, 255, 0),   # Green
-                'kiosk': (0, 255, 255), # Yellow
-            }
-
-            for booth in booths:
-                x = booth['x']
-                y = height - booth['y']
-                w = booth.get('width', 50)
-                h = booth.get('height', 50)
-                category = booth.get('category', 'booth')
-                color = colors.get(category, (0, 255, 0))
-
-                # Draw bounding box
-                cv2.rectangle(
-                    img,
-                    (x - w//2, y - h//2),
-                    (x + w//2, y + h//2),
-                    color,
-                    2
-                )
-
-                # Draw center point
-                cv2.circle(img, (x, y), 5, (0, 0, 255), -1)
-
-                # Add label
-                label = booth.get('name', 'Booth')
-                cv2.putText(
-                    img,
-                    label,
-                    (x - w//2, y - h//2 - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4,
-                    color,
-                    1
-                )
-
-            cv2.imwrite(output_path, img)
-            logger.info(f"Saved visualization to {output_path}")
-
-        except Exception as e:
-            logger.error(f"Error creating visualization: {e}")
-
-
-# Backward compatible class
-class BoothDetector(AdaptiveBoothDetector):
-    """Backward compatible wrapper for AdaptiveBoothDetector."""
-
-    def detect_booths(self, image_path: str) -> List[Dict]:
-        """Original method - now uses adaptive detection."""
-        return self._detect_white_on_colored(image_path, 180)
-
-    def detect_with_grid_analysis(self, image_path: str) -> List[Dict]:
-        """Grid analysis - now uses full adaptive detection."""
-        return self.detect_adaptive(image_path)
-
-    def detect_with_smart_categorization(self, image_path: str) -> List[Dict]:
-        """Smart categorization - now uses full adaptive detection."""
-        return self.detect_adaptive(image_path)
-
-
-def auto_detect_booths(
-    image_path: str,
-    method: str = 'auto',
-    min_booth_area: int = 300,
-    max_booth_area: int = 100000
-) -> List[Dict]:
-    """
-    Convenience function to auto-detect booths from an image.
+    This function finds white rectangular booths on colored backgrounds
+    and detects internal divisions to identify each individual cell.
 
     Args:
         image_path: Path to floor plan image
-        method: Detection method:
-            - 'auto': Fully automatic (recommended)
-            - 'adaptive': Same as auto
-            - 'smart': Same as auto (backward compatible)
-            - 'grid': Same as auto (backward compatible)
-            - 'basic': Simple white-on-colored detection
-            - 'white_on_colored': Detect white booths on colored background
-            - 'colored_on_white': Detect colored booths on white background
-            - 'edge': Edge-based detection
-        min_booth_area: Minimum booth area in pixels
-        max_booth_area: Maximum booth area in pixels
 
     Returns:
-        List of detected booth dictionaries
+        List of booth dictionaries with x, y coordinates at cell centers
     """
-    detector = AdaptiveBoothDetector(
-        min_booth_area=min_booth_area,
-        max_booth_area=max_booth_area
+    logger.info(f"Detecting booth cells in: {image_path}")
+
+    # Read image
+    img = cv2.imread(image_path)
+    if img is None:
+        raise ValueError(f"Could not read image: {image_path}")
+
+    height, width = img.shape[:2]
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # Analyze image to determine threshold
+    mean_brightness = np.mean(gray)
+
+    # Find white areas (booths) - they're typically > 200 brightness
+    # The background is colored (lower brightness in grayscale)
+    _, booth_mask = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
+
+    # Also try Otsu for automatic threshold
+    _, otsu_mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # Use whichever finds more white (booth) areas reasonably
+    booth_white_ratio = np.sum(booth_mask > 0) / (width * height)
+    otsu_white_ratio = np.sum(otsu_mask > 0) / (width * height)
+
+    # Choose the mask that gives reasonable booth coverage (20-70%)
+    if 0.2 < booth_white_ratio < 0.7:
+        mask = booth_mask
+        logger.info(f"Using threshold 200, white ratio: {booth_white_ratio:.1%}")
+    elif 0.2 < otsu_white_ratio < 0.7:
+        mask = otsu_mask
+        logger.info(f"Using Otsu threshold, white ratio: {otsu_white_ratio:.1%}")
+    else:
+        # Try different thresholds
+        for thresh in [180, 190, 210, 220, 170, 160]:
+            _, test_mask = cv2.threshold(gray, thresh, 255, cv2.THRESH_BINARY)
+            ratio = np.sum(test_mask > 0) / (width * height)
+            if 0.15 < ratio < 0.75:
+                mask = test_mask
+                logger.info(f"Using threshold {thresh}, white ratio: {ratio:.1%}")
+                break
+        else:
+            mask = booth_mask
+            logger.info(f"Fallback to threshold 200")
+
+    # Detect edges/lines within the white areas (booth divisions)
+    edges = cv2.Canny(gray, 50, 150)
+
+    # Find lines using HoughLinesP
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=30, minLineLength=20, maxLineGap=5)
+
+    # Create a line mask to separate booth cells
+    line_mask = np.zeros_like(gray)
+    if lines is not None:
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            cv2.line(line_mask, (x1, y1), (x2, y2), 255, 2)
+
+    # Subtract lines from booth mask to separate cells
+    separated_mask = cv2.subtract(mask, line_mask)
+
+    # Clean up
+    kernel_small = np.ones((3, 3), np.uint8)
+    kernel_medium = np.ones((5, 5), np.uint8)
+
+    # Remove small noise
+    separated_mask = cv2.morphologyEx(separated_mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
+    # Close small gaps within cells
+    separated_mask = cv2.morphologyEx(separated_mask, cv2.MORPH_CLOSE, kernel_small, iterations=1)
+
+    # Find contours of individual cells
+    contours, hierarchy = cv2.findContours(
+        separated_mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
     )
 
-    if method in ('auto', 'adaptive', 'smart', 'grid'):
-        return detector.detect_adaptive(image_path)
-    elif method == 'basic' or method == 'white_on_colored':
-        return detector._detect_white_on_colored(image_path, 180)
-    elif method == 'colored_on_white':
-        analysis = detector.analyze_image(image_path)
-        if analysis:
-            return detector._detect_colored_on_white(image_path, analysis)
-        return []
-    elif method == 'edge':
-        analysis = detector.analyze_image(image_path)
-        if analysis:
-            return detector._detect_edge_based(image_path, analysis)
-        return []
-    else:
-        # Default to auto
-        return detector.detect_adaptive(image_path)
+    logger.info(f"Found {len(contours)} initial contours")
+
+    # Filter and process contours
+    booths = []
+    min_area = max(100, (width * height) * 0.0001)  # Minimum 0.01% of image
+    max_area = (width * height) * 0.05  # Maximum 5% of image (single cell shouldn't be huge)
+
+    for contour in contours:
+        area = cv2.contourArea(contour)
+
+        if area < min_area:
+            continue
+
+        # Get bounding rectangle
+        x, y, w, h = cv2.boundingRect(contour)
+
+        # Skip if too large (might be multiple cells merged)
+        if area > max_area:
+            # Try to subdivide this large area
+            sub_booths = subdivide_large_booth(mask, x, y, w, h, height, min_area)
+            booths.extend(sub_booths)
+            continue
+
+        # Aspect ratio check - booths are roughly rectangular
+        aspect = w / h if h > 0 else 0
+        if aspect < 0.1 or aspect > 10:
+            continue
+
+        # Calculate center (flip Y for coordinate system)
+        center_x = x + w // 2
+        center_y = height - (y + h // 2)
+
+        booths.append({
+            'x': center_x,
+            'y': center_y,
+            'width': w,
+            'height': h,
+            'area': area
+        })
+
+    # Remove duplicates (overlapping detections)
+    booths = remove_duplicate_booths(booths)
+
+    # Sort by position (top to bottom, left to right)
+    booths.sort(key=lambda b: (-b['y'], b['x']))
+
+    # Assign names and categories
+    booths = categorize_booths(booths)
+
+    logger.info(f"Detected {len(booths)} booth cells")
+    return booths
 
 
-def analyze_floor_plan(image_path: str) -> Optional[Dict]:
+def subdivide_large_booth(
+    mask: np.ndarray,
+    x: int, y: int, w: int, h: int,
+    img_height: int,
+    min_area: float
+) -> List[Dict]:
     """
-    Analyze a floor plan image and return detection recommendations.
+    Subdivide a large booth area into individual cells using grid detection.
+    """
+    booths = []
+
+    # Extract the region
+    region = mask[y:y+h, x:x+w]
+
+    # Try to find grid lines within this region
+    # Look for vertical and horizontal gaps (dark lines)
+
+    # Scan for vertical divisions
+    col_sums = np.sum(region, axis=0)
+    col_threshold = np.max(col_sums) * 0.3
+
+    # Find gaps (low values indicate dividing lines)
+    v_gaps = []
+    in_gap = False
+    gap_start = 0
+    for i, val in enumerate(col_sums):
+        if val < col_threshold:
+            if not in_gap:
+                gap_start = i
+                in_gap = True
+        else:
+            if in_gap:
+                gap_center = (gap_start + i) // 2
+                v_gaps.append(gap_center)
+                in_gap = False
+
+    # Scan for horizontal divisions
+    row_sums = np.sum(region, axis=1)
+    row_threshold = np.max(row_sums) * 0.3
+
+    h_gaps = []
+    in_gap = False
+    gap_start = 0
+    for i, val in enumerate(row_sums):
+        if val < row_threshold:
+            if not in_gap:
+                gap_start = i
+                in_gap = True
+        else:
+            if in_gap:
+                gap_center = (gap_start + i) // 2
+                h_gaps.append(gap_center)
+                in_gap = False
+
+    # Create grid cells
+    v_positions = [0] + v_gaps + [w]
+    h_positions = [0] + h_gaps + [h]
+
+    for i in range(len(h_positions) - 1):
+        for j in range(len(v_positions) - 1):
+            cell_x = v_positions[j]
+            cell_y = h_positions[i]
+            cell_w = v_positions[j + 1] - v_positions[j]
+            cell_h = h_positions[i + 1] - h_positions[i]
+
+            if cell_w < 5 or cell_h < 5:
+                continue
+
+            cell_area = cell_w * cell_h
+            if cell_area < min_area:
+                continue
+
+            # Check if this cell is mostly white (is a booth)
+            cell_region = region[cell_y:cell_y+cell_h, cell_x:cell_x+cell_w]
+            white_ratio = np.sum(cell_region > 128) / (cell_w * cell_h) if cell_w * cell_h > 0 else 0
+
+            if white_ratio > 0.5:  # At least 50% white
+                center_x = x + cell_x + cell_w // 2
+                center_y = img_height - (y + cell_y + cell_h // 2)
+
+                booths.append({
+                    'x': center_x,
+                    'y': center_y,
+                    'width': cell_w,
+                    'height': cell_h,
+                    'area': cell_area
+                })
+
+    # If no subdivisions found, return the whole booth as one
+    if not booths:
+        center_x = x + w // 2
+        center_y = img_height - (y + h // 2)
+        booths.append({
+            'x': center_x,
+            'y': center_y,
+            'width': w,
+            'height': h,
+            'area': w * h
+        })
+
+    return booths
+
+
+def remove_duplicate_booths(booths: List[Dict], distance_threshold: int = 20) -> List[Dict]:
+    """Remove duplicate/overlapping booth detections."""
+    if not booths:
+        return []
+
+    # Sort by area (larger first)
+    sorted_booths = sorted(booths, key=lambda b: -b['area'])
+
+    kept = []
+    for booth in sorted_booths:
+        is_duplicate = False
+        for existing in kept:
+            dx = abs(booth['x'] - existing['x'])
+            dy = abs(booth['y'] - existing['y'])
+
+            if dx < distance_threshold and dy < distance_threshold:
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
+            kept.append(booth)
+
+    return kept
+
+
+def categorize_booths(booths: List[Dict]) -> List[Dict]:
+    """Assign names and categories to booths based on size."""
+    if not booths:
+        return []
+
+    areas = [b['area'] for b in booths]
+    median_area = np.median(areas)
+
+    counts = {'booth': 0, 'kiosk': 0, 'room': 0}
+
+    for booth in booths:
+        area = booth['area']
+
+        if area > median_area * 3:
+            counts['room'] += 1
+            booth['category'] = 'room'
+            booth['name'] = f"Room {counts['room']}"
+            booth['description'] = 'Large space'
+        elif area < median_area * 0.3:
+            counts['kiosk'] += 1
+            booth['category'] = 'kiosk'
+            booth['name'] = f"Kiosk {counts['kiosk']}"
+            booth['description'] = 'Small kiosk'
+        else:
+            counts['booth'] += 1
+            booth['category'] = 'vendor'
+            booth['name'] = f"Booth {counts['booth']}"
+            booth['description'] = 'Vendor booth'
+
+    logger.info(f"Categorized: {counts}")
+    return booths
+
+
+def visualize_detections(
+    image_path: str,
+    booths: List[Dict],
+    output_path: str
+) -> None:
+    """Create visualization with red dots at booth centers."""
+    img = cv2.imread(image_path)
+    height = img.shape[0]
+
+    for booth in booths:
+        x = booth['x']
+        y_img = height - booth['y']  # Convert back to image coords
+
+        # Draw red filled circle at center
+        cv2.circle(img, (x, y_img), 8, (0, 0, 255), -1)
+
+        # Draw small rectangle outline
+        w = booth.get('width', 20)
+        h = booth.get('height', 20)
+        cv2.rectangle(
+            img,
+            (x - w//2, y_img - h//2),
+            (x + w//2, y_img + h//2),
+            (0, 255, 0), 1
+        )
+
+    cv2.imwrite(output_path, img)
+    logger.info(f"Saved visualization to {output_path}")
+
+
+# Convenience function for API
+def auto_detect_booths(image_path: str, method: str = 'auto') -> List[Dict]:
+    """
+    Main entry point for booth detection.
 
     Args:
         image_path: Path to floor plan image
+        method: Detection method (ignored, always uses best method)
 
     Returns:
-        Dictionary with analysis results and recommendations
+        List of detected booths with coordinates
     """
-    detector = AdaptiveBoothDetector()
-    analysis = detector.analyze_image(image_path)
-
-    if analysis is None:
-        return None
-
-    return {
-        'width': analysis.width,
-        'height': analysis.height,
-        'mean_brightness': analysis.mean_brightness,
-        'std_brightness': analysis.std_brightness,
-        'white_ratio': analysis.white_ratio,
-        'dark_ratio': analysis.dark_ratio,
-        'edge_density': analysis.edge_density,
-        'recommended_mode': analysis.recommended_mode.value,
-        'optimal_threshold': analysis.optimal_threshold,
-        'is_inverted': analysis.is_inverted,
-        'recommendation': (
-            "Use 'colored_on_white' mode" if analysis.is_inverted
-            else "Use 'white_on_colored' mode"
-        )
-    }
+    return detect_booth_cells(image_path)
