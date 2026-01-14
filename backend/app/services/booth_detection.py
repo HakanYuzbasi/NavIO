@@ -308,7 +308,11 @@ class BoothDetector:
         }
 
     def _merge_detections(self, detection_lists: List[List[Dict]]) -> List[Dict]:
-        """Merge detections from multiple strategies, removing duplicates."""
+        """Merge detections from multiple strategies, removing duplicates.
+
+        Priority: Keep SMALLER, more specific detections (individual cells)
+        over larger booth group detections.
+        """
 
         all_cells = []
         for cells in detection_lists:
@@ -317,24 +321,68 @@ class BoothDetector:
         if not all_cells:
             return []
 
-        # Remove duplicates using spatial proximity
-        merged = []
-        merge_threshold = min(self.width, self.height) * 0.02  # 2% of image size
-        merge_threshold = max(10, min(merge_threshold, 30))
+        # Sort by area ASCENDING - prefer smaller, more specific detections
+        # This ensures individual cells are kept over booth groups
+        all_cells.sort(key=lambda c: c['area'])
 
-        # Sort by area (prefer larger/more complete detections)
-        all_cells.sort(key=lambda c: c['area'], reverse=True)
+        # Remove duplicates using bounding box overlap
+        merged = []
 
         for cell in all_cells:
             is_duplicate = False
-            for existing in merged:
-                dx = abs(cell['x'] - existing['x'])
-                dy = abs(cell['y'] - existing['y'])
-                distance = (dx**2 + dy**2) ** 0.5
 
-                if distance < merge_threshold:
-                    is_duplicate = True
-                    break
+            # Get bounding box for this cell
+            cx, cy = cell['x'], cell['img_y']
+            w, h = cell['width'], cell['height']
+            x1, y1 = cx - w // 2, cy - h // 2
+            x2, y2 = cx + w // 2, cy + h // 2
+            area1 = w * h
+
+            for existing in merged:
+                # Get bounding box for existing cell
+                ex, ey = existing['x'], existing['img_y']
+                ew, eh = existing['width'], existing['height']
+                ex1, ey1 = ex - ew // 2, ey - eh // 2
+                ex2, ey2 = ex + ew // 2, ey + eh // 2
+                area2 = ew * eh
+
+                # Calculate intersection
+                ix1 = max(x1, ex1)
+                iy1 = max(y1, ey1)
+                ix2 = min(x2, ex2)
+                iy2 = min(y2, ey2)
+
+                if ix1 < ix2 and iy1 < iy2:
+                    intersection = (ix2 - ix1) * (iy2 - iy1)
+                    union = area1 + area2 - intersection
+                    iou = intersection / union if union > 0 else 0
+
+                    # Check how much of the NEW cell overlaps with existing
+                    overlap_ratio = intersection / area1 if area1 > 0 else 0
+
+                    # Only consider duplicate if:
+                    # 1. High IoU (nearly same detection) OR
+                    # 2. New cell significantly overlaps existing AND sizes are similar
+                    size_ratio = min(area1, area2) / max(area1, area2) if max(area1, area2) > 0 else 0
+
+                    if iou > 0.5:
+                        # Nearly identical detection
+                        is_duplicate = True
+                        break
+                    elif overlap_ratio > 0.7 and size_ratio > 0.5:
+                        # Significant overlap and similar size = same cell
+                        is_duplicate = True
+                        break
+
+                # Check centroid proximity for similar-sized cells only
+                dx = abs(cx - ex)
+                dy = abs(cell['y'] - existing['y'])
+                size_ratio = min(area1, area2) / max(area1, area2) if max(area1, area2) > 0 else 0
+
+                if size_ratio > 0.5:  # Similar size
+                    if dx < min(w, ew) * 0.3 and dy < min(h, eh) * 0.3:
+                        is_duplicate = True
+                        break
 
             if not is_duplicate:
                 merged.append(cell)
