@@ -18,6 +18,9 @@ import sys
 import os
 from typing import List, Dict, Optional
 
+# Direct import to avoid loading all services
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 
 def test_detection(image_path: str, show_walkable: bool = False) -> Optional[Dict]:
     """Test booth detection on a single image."""
@@ -30,12 +33,18 @@ def test_detection(image_path: str, show_walkable: bool = False) -> Optional[Dic
         return None
 
     try:
-        from app.services.booth_detection import (
-            BoothDetector,
-            WalkableAreaDetector,
-            visualize_detections,
-            detect_booth_cells
+        # Direct import from module file to avoid services __init__.py
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "booth_detection",
+            os.path.join(os.path.dirname(__file__), "app/services/booth_detection.py")
         )
+        booth_detection = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(booth_detection)
+
+        BoothDetector = booth_detection.BoothDetector
+        WalkableAreaDetector = booth_detection.WalkableAreaDetector
+        visualize_detections = booth_detection.visualize_detections
 
         # Load image info
         img = cv2.imread(image_path)
@@ -55,8 +64,8 @@ def test_detection(image_path: str, show_walkable: bool = False) -> Optional[Dic
         print(f"\n   Total detected: {len(booths)} booth cells")
 
         # Count categories
+        categories = {}
         if booths:
-            categories = {}
             areas = []
             for b in booths:
                 cat = b.get('category', 'unknown')
@@ -106,48 +115,6 @@ def test_detection(image_path: str, show_walkable: bool = False) -> Optional[Dic
         import traceback
         traceback.print_exc()
         return None
-
-
-def create_combined_visualization(image_path: str, booths: List[Dict], output_path: str):
-    """Create a combined visualization showing booths and walkable areas."""
-    from app.services.booth_detection import WalkableAreaDetector
-
-    img = cv2.imread(image_path)
-    height = img.shape[0]
-
-    # Detect walkable areas
-    walkable_detector = WalkableAreaDetector(image_path)
-    walkable_mask = walkable_detector.detect()
-
-    # Create overlay
-    overlay = img.copy()
-
-    # Color walkable areas in semi-transparent cyan
-    overlay[walkable_mask > 0] = [180, 180, 0]  # Cyan for corridors
-
-    # Blend
-    result = cv2.addWeighted(img, 0.6, overlay, 0.4, 0)
-
-    # Draw booth markers
-    for booth in booths:
-        x = booth['x']
-        y_img = booth.get('img_y', height - booth['y'])
-
-        # Red dot at center
-        cv2.circle(result, (x, y_img), 6, (0, 0, 255), -1)
-        cv2.circle(result, (x, y_img), 6, (255, 255, 255), 1)  # White outline
-
-        # Green rectangle
-        w = booth.get('width', 20)
-        h = booth.get('height', 20)
-        x1 = x - w // 2
-        y1 = y_img - h // 2
-        x2 = x + w // 2
-        y2 = y_img + h // 2
-        cv2.rectangle(result, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
-    cv2.imwrite(output_path, result)
-    return output_path
 
 
 def main():
