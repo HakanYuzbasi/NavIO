@@ -16,6 +16,7 @@ import nodeRoutes from './routes/nodes';
 import edgeRoutes from './routes/edges';
 import routingRoutes from './routes/routing';
 import qrRoutes from './routes/qr';
+import floorPlanAnalysisRoutes from './routes/floorPlanAnalysis';
 
 const app: Application = express();
 
@@ -55,13 +56,14 @@ app.use('/api/nodes', nodeRoutes);
 app.use('/api/edges', edgeRoutes);
 app.use('/api/route', routingRoutes);
 app.use('/api/qr', qrRoutes);
+app.use('/api/analyze', floorPlanAnalysisRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({
     name: 'NaviO API',
     version: '1.0.0',
-    description: 'Indoor Navigation API',
+    description: 'Indoor Navigation API with Automatic Floor Plan Analysis',
     endpoints: {
       health: '/health',
       venues: '/api/venues',
@@ -69,6 +71,7 @@ app.get('/', (req, res) => {
       edges: '/api/edges',
       routing: '/api/route',
       qr: '/api/qr',
+      analyze: '/api/analyze',
     },
   });
 });
