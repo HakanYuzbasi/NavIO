@@ -3,7 +3,7 @@
  * Production-ready type definitions
  */
 
-export type NodeType = 'entrance' | 'booth' | 'intersection';
+export type NodeType = 'entrance' | 'booth' | 'intersection' | 'waypoint';
 
 export interface Venue {
   id: string;
@@ -48,10 +48,18 @@ export interface RouteRequest {
   endNodeId: string;
 }
 
+export interface DirectionStep {
+  instruction: string;
+  distance: number;
+  landmark?: string;
+}
+
 export interface RouteResponse {
   path: Node[];
   totalDistance: number;
   estimatedTimeSeconds: number;
+  directions?: DirectionStep[];
+  simpleDirections?: string;
 }
 
 export interface CreateVenueDTO {

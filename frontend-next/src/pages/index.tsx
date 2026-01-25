@@ -4,10 +4,13 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { Venue } from '../types';
 import { venueApi } from '../lib/api';
+import Layout from '../components/Layout';
+import { MapPin, Plus, Navigation } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { motion } from 'framer-motion';
 
 export default function HomePage() {
   const router = useRouter();
@@ -30,207 +33,79 @@ export default function HomePage() {
   };
 
   return (
-    <>
-      <Head>
-        <title>NaviO - Indoor Navigation</title>
-        <meta name="description" content="Navigate indoor spaces with ease" />
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-      </Head>
-
-      <div className="home-page">
-        <header className="header">
-          <div className="logo">🧭 NaviO</div>
-          <button className="admin-link" onClick={() => router.push('/admin')}>
-            Admin
+    <Layout title="NaviO - Dashboard">
+      <div className="space-y-8">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-slate-900 to-slate-600 dark:from-white dark:to-slate-400">
+              Welcome Back
+            </h1>
+            <p className="text-slate-500 dark:text-slate-400 mt-1">Select a venue to start navigating or manage your spaces.</p>
+          </div>
+          <button
+            onClick={() => router.push('/admin')}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors shadow-sm hover:shadow-md font-medium"
+          >
+            <Plus size={18} />
+            Create Venue
           </button>
-        </header>
+        </div>
 
-        <main className="main">
-          <h1>Find Your Way</h1>
-          <p className="subtitle">Navigate indoor venues with QR-code positioning</p>
-
-          {loading ? (
-            <div className="loading">Loading venues...</div>
-          ) : venues.length === 0 ? (
-            <div className="empty">
-              <p>No venues available.</p>
-              <button className="btn btn-primary" onClick={() => router.push('/admin')}>
-                Create Venue
-              </button>
+        {loading ? (
+          <div className="flex items-center justify-center h-64 text-slate-400">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+          </div>
+        ) : venues.length === 0 ? (
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 p-12 text-center">
+            <div className="w-16 h-16 bg-slate-50 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4">
+              <MapPin className="text-slate-400 dark:text-slate-500" size={32} />
             </div>
-          ) : (
-            <div className="venue-grid">
-              {venues.map(venue => (
-                <div
-                  key={venue.id}
-                  className="venue-card"
-                  onClick={() => router.push(`/venue/${venue.id}`)}
-                >
-                  <div className="venue-icon">📍</div>
-                  <h3>{venue.name}</h3>
-                  <button className="btn btn-secondary">Navigate</button>
+            <h3 className="text-lg font-medium text-slate-900 dark:text-white">No venues found</h3>
+            <p className="text-slate-500 dark:text-slate-400 mt-1 mb-6">Get started by creating your first venue map.</p>
+            <button
+              onClick={() => router.push('/admin')}
+              className="px-4 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 font-medium transition-colors"
+            >
+              Create Venue
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {venues.map((venue, i) => (
+              <motion.div
+                key={venue.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.1 }}
+                onClick={() => router.push(`/venue/${venue.id}`)}
+                className="group relative bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 hover:shadow-xl hover:border-primary-200 dark:hover:border-primary-900 transition-all duration-300 cursor-pointer overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:opacity-20 transition-opacity transform group-hover:scale-110 duration-500">
+                  <Navigation size={64} className="text-primary-600" />
                 </div>
-              ))}
-            </div>
-          )}
-        </main>
 
-        <footer className="footer">
-          <p>Powered by NaviO Indoor Navigation System</p>
-        </footer>
+                <div className="relative z-10">
+                  <div className="w-12 h-12 bg-primary-50 dark:bg-primary-900/30 rounded-xl flex items-center justify-center mb-4 group-hover:bg-primary-600 group-hover:text-white transition-colors duration-300">
+                    <MapPin size={24} className="text-primary-600 dark:text-primary-400 group-hover:text-white transition-colors" />
+                  </div>
+
+                  <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors">
+                    {venue.name}
+                  </h3>
+                  <p className="text-slate-500 dark:text-slate-400 text-sm mb-6 line-clamp-2">
+                    Indoor navigation map for {venue.name}. Click to view details and start navigating.
+                  </p>
+
+                  <div className="flex items-center gap-2 text-primary-600 dark:text-primary-400 font-medium text-sm group-hover:translate-x-1 transition-transform">
+                    Start Navigation <Navigation size={14} />
+                  </div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
       </div>
-
-      <style jsx>{`
-        .home-page {
-          min-height: 100vh;
-          display: flex;
-          flex-direction: column;
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        }
-
-        .header {
-          padding: 20px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-
-        .logo {
-          font-size: 24px;
-          font-weight: bold;
-          color: white;
-        }
-
-        .admin-link {
-          background: rgba(255, 255, 255, 0.2);
-          color: white;
-          border: none;
-          padding: 8px 20px;
-          border-radius: 20px;
-          cursor: pointer;
-          font-weight: 500;
-        }
-
-        .admin-link:hover {
-          background: rgba(255, 255, 255, 0.3);
-        }
-
-        .main {
-          flex: 1;
-          max-width: 1200px;
-          margin: 0 auto;
-          padding: 40px 20px;
-          text-align: center;
-        }
-
-        h1 {
-          font-size: 48px;
-          color: white;
-          margin: 0 0 16px 0;
-        }
-
-        .subtitle {
-          font-size: 20px;
-          color: rgba(255, 255, 255, 0.9);
-          margin: 0 0 48px 0;
-        }
-
-        .loading,
-        .empty {
-          color: white;
-          font-size: 18px;
-          padding: 40px;
-        }
-
-        .empty p {
-          margin-bottom: 20px;
-        }
-
-        .venue-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-          gap: 24px;
-          margin-top: 40px;
-        }
-
-        .venue-card {
-          background: white;
-          border-radius: 16px;
-          padding: 32px 24px;
-          cursor: pointer;
-          transition: all 0.3s;
-          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
-
-        .venue-card:hover {
-          transform: translateY(-4px);
-          box-shadow: 0 8px 12px rgba(0, 0, 0, 0.15);
-        }
-
-        .venue-icon {
-          font-size: 48px;
-          margin-bottom: 16px;
-        }
-
-        .venue-card h3 {
-          margin: 0 0 20px 0;
-          font-size: 24px;
-          color: #111827;
-        }
-
-        .btn {
-          padding: 12px 24px;
-          border: none;
-          border-radius: 8px;
-          font-size: 16px;
-          font-weight: 500;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-
-        .btn-primary {
-          background: white;
-          color: #667eea;
-        }
-
-        .btn-primary:hover {
-          background: #f3f4f6;
-        }
-
-        .btn-secondary {
-          background: #667eea;
-          color: white;
-          width: 100%;
-        }
-
-        .btn-secondary:hover {
-          background: #5568d3;
-        }
-
-        .footer {
-          padding: 20px;
-          text-align: center;
-          color: rgba(255, 255, 255, 0.8);
-        }
-
-        .footer p {
-          margin: 0;
-        }
-
-        @media (max-width: 768px) {
-          h1 {
-            font-size: 36px;
-          }
-
-          .subtitle {
-            font-size: 18px;
-          }
-
-          .venue-grid {
-            grid-template-columns: 1fr;
-          }
-        }
-      `}</style>
-    </>
+    </Layout>
   );
 }
+

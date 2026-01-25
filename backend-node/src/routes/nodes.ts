@@ -67,9 +67,9 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
-    if (!['entrance', 'booth', 'intersection'].includes(dto.type)) {
+    if (!['entrance', 'booth', 'intersection', 'waypoint'].includes(dto.type)) {
       return res.status(400).json({
-        error: 'type must be entrance, booth, or intersection',
+        error: 'type must be entrance, booth, intersection, or waypoint',
       });
     }
 

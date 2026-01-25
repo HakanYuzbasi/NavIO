@@ -46,6 +46,52 @@ router.post('/', async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/route/alternatives
+ * Calculate K alternative routes between two nodes
+ * Returns multiple route options sorted by distance
+ */
+router.post('/alternatives', async (req: Request, res: Response) => {
+  try {
+    const request: RouteRequest & { count?: number } = req.body;
+
+    if (!request.venueId || !request.startNodeId || !request.endNodeId) {
+      return res.status(400).json({
+        error: 'venueId, startNodeId, and endNodeId are required',
+      });
+    }
+
+    const count = Math.min(Math.max(request.count || 3, 1), 5); // 1-5 alternatives
+
+    const routes = await pathfindingService.findAlternativeRoutes(
+      request.venueId,
+      request.startNodeId,
+      request.endNodeId,
+      count
+    );
+
+    if (routes.length === 0) {
+      return res.status(404).json({
+        error: 'No paths found between the specified nodes',
+      });
+    }
+
+    res.json({
+      count: routes.length,
+      routes: routes.map((route, index) => ({
+        ...route,
+        routeIndex: index,
+        isShortestPath: index === 0,
+      })),
+    });
+  } catch (error: any) {
+    if (error.message.includes('not found')) {
+      return res.status(404).json({ error: error.message });
+    }
+    res.status(500).json({ error: 'Failed to calculate alternative routes' });
+  }
+});
+
+/**
  * GET /api/route/validate/:venueId
  * Validate graph connectivity for a venue
  */

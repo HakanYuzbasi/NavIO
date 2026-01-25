@@ -1,13 +1,17 @@
-/**
- * Admin Panel
- * Venue and navigation graph management
- */
-
 import React, { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
-import { Venue, Node, Edge, NodeType } from '../types';
-import { venueApi, nodeApi, edgeApi, qrApi } from '../lib/api';
+import { Venue, Node, Edge } from '../types';
+import { venueApi, nodeApi, edgeApi } from '../lib/api';
+import Layout from '../components/Layout';
+import { VenueList } from '../components/admin/VenueList';
+import { VenueForm } from '../components/admin/VenueForm';
+import { NodeManager } from '../components/admin/NodeManager';
+import { EdgeManager } from '../components/admin/EdgeManager';
+import { QRGenerator } from '../components/admin/QRGenerator';
+import { AutoGraphGenerator } from '../components/admin/AutoGraphGenerator';
+import { Settings, Map, Share2, QrCode, Wand2, ArrowLeft } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 export default function AdminPage() {
   const router = useRouter();
@@ -17,22 +21,7 @@ export default function AdminPage() {
   const [edges, setEdges] = useState<Edge[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'venues' | 'nodes' | 'edges' | 'qr'>('venues');
-
-  // Form states
-  const [venueName, setVenueName] = useState('');
-  const [venueMapUrl, setVenueMapUrl] = useState('');
-  const [venueWidth, setVenueWidth] = useState('1000');
-  const [venueHeight, setVenueHeight] = useState('800');
-
-  const [nodeName, setNodeName] = useState('');
-  const [nodeType, setNodeType] = useState<NodeType>('booth');
-  const [nodeX, setNodeX] = useState('');
-  const [nodeY, setNodeY] = useState('');
-
-  const [edgeFrom, setEdgeFrom] = useState('');
-  const [edgeTo, setEdgeTo] = useState('');
-  const [edgeDistance, setEdgeDistance] = useState('');
+  const [activeTab, setActiveTab] = useState<'nodes' | 'edges' | 'qr' | 'analyze'>('nodes');
 
   useEffect(() => {
     loadVenues();
@@ -69,660 +58,191 @@ export default function AdminPage() {
     }
   };
 
-  const handleCreateVenue = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      setLoading(true);
-      const venue = await venueApi.create({
-        name: venueName,
-        mapImageUrl: venueMapUrl || undefined,
-        width: parseInt(venueWidth),
-        height: parseInt(venueHeight),
-      });
-      setVenues([...venues, venue]);
-      setVenueName('');
-      setVenueMapUrl('');
-      setError(null);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCreateNode = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedVenue) return;
-
-    try {
-      setLoading(true);
-      const node = await nodeApi.create({
-        venueId: selectedVenue.id,
-        name: nodeName,
-        type: nodeType,
-        x: parseFloat(nodeX),
-        y: parseFloat(nodeY),
-      });
-      setNodes([...nodes, node]);
-      setNodeName('');
-      setNodeX('');
-      setNodeY('');
-      setError(null);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCreateEdge = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedVenue) return;
-
-    try {
-      setLoading(true);
-      const edge = await edgeApi.create({
-        venueId: selectedVenue.id,
-        fromNodeId: edgeFrom,
-        toNodeId: edgeTo,
-        distance: parseFloat(edgeDistance),
-      });
-      setEdges([...edges, edge]);
-      setEdgeFrom('');
-      setEdgeTo('');
-      setEdgeDistance('');
-      setError(null);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGenerateQRCodes = async () => {
-    if (!selectedVenue) return;
-
-    try {
-      setLoading(true);
-      const result = await qrApi.generateForVenue(selectedVenue.id);
-      alert(`Generated ${result.count} QR codes!`);
-      setError(null);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+  const handleVenueCreated = (venue: Venue) => {
+    setVenues([...venues, venue]);
+    setSelectedVenue(venue);
   };
 
   const handleViewVenue = (venue: Venue) => {
     router.push(`/venue/${venue.id}`);
   };
 
-  const handleDeleteNode = async (nodeId: string) => {
-    if (!confirm('Delete this node?')) return;
-
-    try {
-      await nodeApi.delete(nodeId);
-      setNodes(nodes.filter(n => n.id !== nodeId));
-    } catch (err: any) {
-      setError(err.message);
-    }
+  // Node handlers
+  const handleNodeCreated = (node: Node) => {
+    setNodes([...nodes, node]);
   };
 
-  const handleDeleteEdge = async (edgeId: string) => {
-    if (!confirm('Delete this edge?')) return;
+  const handleNodeDeleted = (nodeId: string) => {
+    setNodes(nodes.filter(n => n.id !== nodeId));
+    // Also remove connected edges
+    setEdges(edges.filter(e => e.fromNodeId !== nodeId && e.toNodeId !== nodeId));
+  };
 
-    try {
-      await edgeApi.delete(edgeId);
-      setEdges(edges.filter(e => e.id !== edgeId));
-    } catch (err: any) {
-      setError(err.message);
+  // Edge handlers
+  const handleEdgeCreated = (edge: Edge) => {
+    setEdges([...edges, edge]);
+  };
+
+  const handleEdgeDeleted = (edgeId: string) => {
+    setEdges(edges.filter(e => e.id !== edgeId));
+  };
+
+  // Graph generated handler
+  const handleGraphGenerated = (newNodes: Node[]) => {
+    // Refresh all data
+    if (selectedVenue) {
+      loadVenueData(selectedVenue.id);
     }
   };
 
   return (
-    <>
+    <Layout>
       <Head>
         <title>Admin Panel - NaviO</title>
       </Head>
 
-      <div className="admin-page">
-        <header className="header">
-          <h1>🛠 Admin Panel</h1>
+      <div className="space-y-6">
+        <header className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Admin Dashboard</h1>
+            <p className="text-slate-500 mt-1">Manage venues, navigation graphs, and QR codes.</p>
+          </div>
         </header>
 
-        <div className="container">
-          {error && (
-            <div className="error-banner">
-              {error}
-              <button onClick={() => setError(null)}>✕</button>
-            </div>
-          )}
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl flex items-center justify-between shadow-sm">
+            <span>{error}</span>
+            <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700 font-bold">✕</button>
+          </div>
+        )}
 
-          <div className="two-column">
-            {/* Venue Selection */}
-            <div className="sidebar">
-              <h2>Venues</h2>
-              <div className="venue-list">
-                {venues.map(venue => (
-                  <div
-                    key={venue.id}
-                    className={`venue-item ${selectedVenue?.id === venue.id ? 'active' : ''}`}
-                    onClick={() => setSelectedVenue(venue)}
-                  >
-                    <div className="venue-name">{venue.name}</div>
-                    <button
-                      className="btn-small"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleViewVenue(venue);
-                      }}
-                    >
-                      View
-                    </button>
-                  </div>
-                ))}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          {/* Left Sidebar: Venue List & Create */}
+          <div className="lg:col-span-4 space-y-6 sticky top-24">
+            <VenueList
+              venues={venues}
+              selectedVenueId={selectedVenue?.id}
+              onSelect={setSelectedVenue}
+              onView={handleViewVenue}
+            />
+            <VenueForm onVenueCreated={handleVenueCreated} />
+          </div>
+
+          {/* Main Content Area */}
+          <div className="lg:col-span-8">
+            {!selectedVenue ? (
+              <div className="bg-white rounded-2xl border-2 border-dashed border-slate-200 p-12 text-center h-[500px] flex flex-col items-center justify-center">
+                <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-6">
+                  <Settings className="text-slate-300" size={40} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900">No Venue Selected</h3>
+                <p className="text-slate-500 mt-2 max-w-sm mx-auto">
+                  Select an existing venue from the sidebar or creating a new one to manage its navigation graph.
+                </p>
               </div>
-
-              <form onSubmit={handleCreateVenue} className="form">
-                <h3>Create Venue</h3>
-                <input
-                  type="text"
-                  placeholder="Venue name"
-                  value={venueName}
-                  onChange={e => setVenueName(e.target.value)}
-                  required
-                />
-                <input
-                  type="text"
-                  placeholder="Map image URL (optional)"
-                  value={venueMapUrl}
-                  onChange={e => setVenueMapUrl(e.target.value)}
-                />
-                <div className="form-row">
-                  <input
-                    type="number"
-                    placeholder="Width"
-                    value={venueWidth}
-                    onChange={e => setVenueWidth(e.target.value)}
-                  />
-                  <input
-                    type="number"
-                    placeholder="Height"
-                    value={venueHeight}
-                    onChange={e => setVenueHeight(e.target.value)}
-                  />
-                </div>
-                <button type="submit" className="btn btn-primary" disabled={loading}>
-                  Create Venue
-                </button>
-              </form>
-            </div>
-
-            {/* Main Content */}
-            <div className="main-content">
-              {!selectedVenue ? (
-                <div className="empty-state">
-                  <p>Select a venue to manage its navigation graph</p>
-                </div>
-              ) : (
-                <>
-                  <div className="tabs">
+            ) : (
+              <div className="space-y-6">
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900">{selectedVenue.name}</h2>
+                    <div className="flex gap-4 mt-1 text-sm text-slate-500">
+                      <span>{nodes.length} Nodes</span>
+                      <span>•</span>
+                      <span>{edges.length} Connections</span>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
                     <button
-                      className={activeTab === 'nodes' ? 'active' : ''}
-                      onClick={() => setActiveTab('nodes')}
+                      onClick={() => handleViewVenue(selectedVenue)}
+                      className="px-4 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg font-medium transition-colors text-sm flex items-center gap-2"
                     >
-                      Nodes ({nodes.length})
-                    </button>
-                    <button
-                      className={activeTab === 'edges' ? 'active' : ''}
-                      onClick={() => setActiveTab('edges')}
-                    >
-                      Edges ({edges.length})
-                    </button>
-                    <button
-                      className={activeTab === 'qr' ? 'active' : ''}
-                      onClick={() => setActiveTab('qr')}
-                    >
-                      QR Codes
+                      <Share2 size={16} />
+                      View Live Venue
                     </button>
                   </div>
+                </div>
 
+                {/* Tabs */}
+                <div className="flex border-b border-slate-200 space-x-1 overflow-x-auto">
+                  <button
+                    onClick={() => setActiveTab('nodes')}
+                    className={cn(
+                      "px-6 py-3 font-medium text-sm transition-colors border-b-2 flex items-center gap-2 whitespace-nowrap",
+                      activeTab === 'nodes' ? "border-primary-600 text-primary-600" : "border-transparent text-slate-500 hover:text-slate-700"
+                    )}
+                  >
+                    <Map size={16} />
+                    Nodes
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('edges')}
+                    className={cn(
+                      "px-6 py-3 font-medium text-sm transition-colors border-b-2 flex items-center gap-2 whitespace-nowrap",
+                      activeTab === 'edges' ? "border-primary-600 text-primary-600" : "border-transparent text-slate-500 hover:text-slate-700"
+                    )}
+                  >
+                    <Share2 size={16} />
+                    Connections
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('qr')}
+                    className={cn(
+                      "px-6 py-3 font-medium text-sm transition-colors border-b-2 flex items-center gap-2 whitespace-nowrap",
+                      activeTab === 'qr' ? "border-primary-600 text-primary-600" : "border-transparent text-slate-500 hover:text-slate-700"
+                    )}
+                  >
+                    <QrCode size={16} />
+                    QR Codes
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('analyze')}
+                    className={cn(
+                      "px-6 py-3 font-medium text-sm transition-colors border-b-2 flex items-center gap-2 whitespace-nowrap",
+                      activeTab === 'analyze' ? "border-indigo-600 text-indigo-600 bg-indigo-50/50" : "border-transparent text-slate-500 hover:text-slate-700"
+                    )}
+                  >
+                    <Wand2 size={16} />
+                    Auto-Generate
+                  </button>
+                </div>
+
+                {/* Tab Content */}
+                <div className="min-h-[400px]">
                   {activeTab === 'nodes' && (
-                    <div className="tab-content">
-                      <form onSubmit={handleCreateNode} className="form">
-                        <h3>Create Node</h3>
-                        <input
-                          type="text"
-                          placeholder="Node name"
-                          value={nodeName}
-                          onChange={e => setNodeName(e.target.value)}
-                          required
-                        />
-                        <select
-                          value={nodeType}
-                          onChange={e => setNodeType(e.target.value as NodeType)}
-                        >
-                          <option value="booth">Booth</option>
-                          <option value="entrance">Entrance</option>
-                          <option value="intersection">Intersection</option>
-                        </select>
-                        <div className="form-row">
-                          <input
-                            type="number"
-                            placeholder="X coordinate"
-                            value={nodeX}
-                            onChange={e => setNodeX(e.target.value)}
-                            required
-                          />
-                          <input
-                            type="number"
-                            placeholder="Y coordinate"
-                            value={nodeY}
-                            onChange={e => setNodeY(e.target.value)}
-                            required
-                          />
-                        </div>
-                        <button type="submit" className="btn btn-primary" disabled={loading}>
-                          Create Node
-                        </button>
-                      </form>
-
-                      <div className="list">
-                        {nodes.map(node => (
-                          <div key={node.id} className="list-item">
-                            <div className="list-item-info">
-                              <div className="list-item-name">{node.name}</div>
-                              <div className="list-item-meta">
-                                {node.type} • ({node.x}, {node.y})
-                              </div>
-                            </div>
-                            <button
-                              className="btn-danger"
-                              onClick={() => handleDeleteNode(node.id)}
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                    <NodeManager
+                      venueId={selectedVenue.id}
+                      nodes={nodes}
+                      onNodeCreated={handleNodeCreated}
+                      onNodeDeleted={handleNodeDeleted}
+                    />
                   )}
-
                   {activeTab === 'edges' && (
-                    <div className="tab-content">
-                      <form onSubmit={handleCreateEdge} className="form">
-                        <h3>Create Edge</h3>
-                        <select
-                          value={edgeFrom}
-                          onChange={e => setEdgeFrom(e.target.value)}
-                          required
-                        >
-                          <option value="">From node...</option>
-                          {nodes.map(node => (
-                            <option key={node.id} value={node.id}>
-                              {node.name}
-                            </option>
-                          ))}
-                        </select>
-                        <select
-                          value={edgeTo}
-                          onChange={e => setEdgeTo(e.target.value)}
-                          required
-                        >
-                          <option value="">To node...</option>
-                          {nodes.map(node => (
-                            <option key={node.id} value={node.id}>
-                              {node.name}
-                            </option>
-                          ))}
-                        </select>
-                        <input
-                          type="number"
-                          placeholder="Distance (meters)"
-                          value={edgeDistance}
-                          onChange={e => setEdgeDistance(e.target.value)}
-                          required
-                          step="0.1"
-                        />
-                        <button type="submit" className="btn btn-primary" disabled={loading}>
-                          Create Edge
-                        </button>
-                      </form>
-
-                      <div className="list">
-                        {edges.map(edge => {
-                          const fromNode = nodes.find(n => n.id === edge.fromNodeId);
-                          const toNode = nodes.find(n => n.id === edge.toNodeId);
-                          return (
-                            <div key={edge.id} className="list-item">
-                              <div className="list-item-info">
-                                <div className="list-item-name">
-                                  {fromNode?.name} → {toNode?.name}
-                                </div>
-                                <div className="list-item-meta">
-                                  Distance: {edge.distance}m
-                                </div>
-                              </div>
-                              <button
-                                className="btn-danger"
-                                onClick={() => handleDeleteEdge(edge.id)}
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+                    <EdgeManager
+                      venueId={selectedVenue.id}
+                      nodes={nodes}
+                      edges={edges}
+                      onEdgeCreated={handleEdgeCreated}
+                      onEdgeDeleted={handleEdgeDeleted}
+                    />
                   )}
-
                   {activeTab === 'qr' && (
-                    <div className="tab-content">
-                      <div className="qr-section">
-                        <h3>QR Code Generation</h3>
-                        <p>
-                          Generate QR codes for all nodes in this venue. Each QR code will
-                          link to this venue with the specific node as the starting location.
-                        </p>
-                        <button
-                          className="btn btn-primary"
-                          onClick={handleGenerateQRCodes}
-                          disabled={loading || nodes.length === 0}
-                        >
-                          Generate QR Codes for All Nodes
-                        </button>
-
-                        <div className="info-box">
-                          <strong>How it works:</strong>
-                          <ul>
-                            <li>Print QR codes and place them at corresponding physical locations</li>
-                            <li>Visitors scan QR codes to set their current location</li>
-                            <li>QR codes contain URLs like: /venue/{selectedVenue.id}?node=NODE_ID</li>
-                          </ul>
-                        </div>
-                      </div>
-                    </div>
+                    <QRGenerator
+                      venueId={selectedVenue.id}
+                      nodes={nodes}
+                    />
                   )}
-                </>
-              )}
-            </div>
+                  {activeTab === 'analyze' && (
+                    <AutoGraphGenerator
+                      venue={selectedVenue}
+                      onGraphGenerated={handleGraphGenerated}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
-
-      <style jsx>{`
-        .admin-page {
-          min-height: 100vh;
-          background: #f9fafb;
-        }
-
-        .header {
-          background: white;
-          padding: 20px;
-          border-bottom: 1px solid #e5e7eb;
-        }
-
-        .header h1 {
-          margin: 0;
-          font-size: 24px;
-        }
-
-        .container {
-          max-width: 1400px;
-          margin: 0 auto;
-          padding: 20px;
-        }
-
-        .error-banner {
-          background: #fef2f2;
-          color: #991b1b;
-          padding: 12px 16px;
-          border-radius: 8px;
-          margin-bottom: 20px;
-          display: flex;
-          justify-content: space-between;
-        }
-
-        .error-banner button {
-          background: none;
-          border: none;
-          color: #991b1b;
-          cursor: pointer;
-        }
-
-        .two-column {
-          display: grid;
-          grid-template-columns: 300px 1fr;
-          gap: 20px;
-        }
-
-        .sidebar {
-          background: white;
-          padding: 20px;
-          border-radius: 8px;
-          height: fit-content;
-        }
-
-        .sidebar h2 {
-          margin-top: 0;
-          font-size: 18px;
-        }
-
-        .venue-list {
-          margin-bottom: 20px;
-        }
-
-        .venue-item {
-          padding: 12px;
-          border: 1px solid #e5e7eb;
-          border-radius: 6px;
-          margin-bottom: 8px;
-          cursor: pointer;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-
-        .venue-item:hover {
-          background: #f9fafb;
-        }
-
-        .venue-item.active {
-          background: #eff6ff;
-          border-color: #3b82f6;
-        }
-
-        .venue-name {
-          font-weight: 500;
-        }
-
-        .btn-small {
-          padding: 4px 12px;
-          font-size: 14px;
-          background: #3b82f6;
-          color: white;
-          border: none;
-          border-radius: 4px;
-          cursor: pointer;
-        }
-
-        .btn-small:hover {
-          background: #2563eb;
-        }
-
-        .main-content {
-          background: white;
-          padding: 20px;
-          border-radius: 8px;
-        }
-
-        .empty-state {
-          text-align: center;
-          padding: 60px 20px;
-          color: #6b7280;
-        }
-
-        .tabs {
-          display: flex;
-          gap: 4px;
-          border-bottom: 2px solid #e5e7eb;
-          margin-bottom: 20px;
-        }
-
-        .tabs button {
-          padding: 12px 24px;
-          border: none;
-          background: none;
-          cursor: pointer;
-          font-size: 16px;
-          font-weight: 500;
-          color: #6b7280;
-          border-bottom: 2px solid transparent;
-          margin-bottom: -2px;
-        }
-
-        .tabs button.active {
-          color: #3b82f6;
-          border-bottom-color: #3b82f6;
-        }
-
-        .tab-content {
-          padding: 20px 0;
-        }
-
-        .form {
-          background: #f9fafb;
-          padding: 20px;
-          border-radius: 8px;
-          margin-bottom: 30px;
-        }
-
-        .form h3 {
-          margin-top: 0;
-          font-size: 16px;
-        }
-
-        .form input,
-        .form select {
-          width: 100%;
-          padding: 10px 12px;
-          border: 1px solid #d1d5db;
-          border-radius: 6px;
-          margin-bottom: 12px;
-          font-size: 14px;
-        }
-
-        .form-row {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 12px;
-        }
-
-        .btn {
-          padding: 10px 20px;
-          border: none;
-          border-radius: 6px;
-          font-size: 14px;
-          font-weight: 500;
-          cursor: pointer;
-          width: 100%;
-        }
-
-        .btn-primary {
-          background: #3b82f6;
-          color: white;
-        }
-
-        .btn-primary:hover:not(:disabled) {
-          background: #2563eb;
-        }
-
-        .btn:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .list {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-        }
-
-        .list-item {
-          padding: 16px;
-          border: 1px solid #e5e7eb;
-          border-radius: 6px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-
-        .list-item-info {
-          flex: 1;
-        }
-
-        .list-item-name {
-          font-weight: 500;
-          margin-bottom: 4px;
-        }
-
-        .list-item-meta {
-          font-size: 14px;
-          color: #6b7280;
-        }
-
-        .btn-danger {
-          padding: 6px 16px;
-          background: #ef4444;
-          color: white;
-          border: none;
-          border-radius: 4px;
-          cursor: pointer;
-          font-size: 14px;
-        }
-
-        .btn-danger:hover {
-          background: #dc2626;
-        }
-
-        .qr-section {
-          max-width: 600px;
-        }
-
-        .qr-section h3 {
-          margin-top: 0;
-        }
-
-        .qr-section p {
-          color: #6b7280;
-          margin-bottom: 20px;
-        }
-
-        .info-box {
-          background: #eff6ff;
-          border: 1px solid #bfdbfe;
-          border-radius: 8px;
-          padding: 16px;
-          margin-top: 20px;
-        }
-
-        .info-box strong {
-          display: block;
-          margin-bottom: 12px;
-          color: #1e40af;
-        }
-
-        .info-box ul {
-          margin: 0;
-          padding-left: 20px;
-          color: #1e3a8a;
-        }
-
-        .info-box li {
-          margin-bottom: 8px;
-        }
-      `}</style>
-    </>
+    </Layout>
   );
 }

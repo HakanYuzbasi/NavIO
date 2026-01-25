@@ -4,6 +4,8 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
+import { X, Camera } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface QRScannerProps {
   onScan: (data: string) => void;
@@ -105,153 +107,57 @@ export const QRScanner: React.FC<QRScannerProps> = ({ onScan, onError, onClose }
   };
 
   return (
-    <div className="qr-scanner">
-      <div className="scanner-overlay">
-        <div className="scanner-header">
-          <h2>Scan QR Code</h2>
-          <button onClick={onClose} className="close-button">
-            ✕
+    <div className="fixed inset-0 z-50 bg-slate-900/95 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-black rounded-3xl overflow-hidden shadow-2xl relative">
+        <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-center z-10 bg-gradient-to-b from-black/80 to-transparent">
+          <h2 className="text-white text-xl font-bold flex items-center gap-2">
+            <Camera size={24} />
+            Scan QR Code
+          </h2>
+          <button
+            onClick={onClose}
+            className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 transition-colors backdrop-blur-md"
+          >
+            <X size={20} />
           </button>
         </div>
 
-        <div className="video-container">
+        <div className="relative aspect-square bg-slate-800">
           <video
             ref={videoRef}
             autoPlay
             playsInline
             muted
-            className="scanner-video"
+            className="w-full h-full object-cover"
           />
-          <canvas ref={canvasRef} className="scanner-canvas" hidden />
+          <canvas ref={canvasRef} className="hidden" />
 
-          <div className="scanner-frame">
-            <div className="corner top-left"></div>
-            <div className="corner top-right"></div>
-            <div className="corner bottom-left"></div>
-            <div className="corner bottom-right"></div>
+          {/* Scanner overlay frame */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="w-64 h-64 border-2 border-primary-500 rounded-2xl relative shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]">
+              {/* Corner markers */}
+              <div className="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-primary-500 rounded-tl-xl"></div>
+              <div className="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-primary-500 rounded-tr-xl"></div>
+              <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-primary-500 rounded-bl-xl"></div>
+              <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-primary-500 rounded-br-xl"></div>
+
+              {/* Scanning line animation */}
+              <div className="absolute inset-x-0 h-1 bg-primary-500/50 blur-sm animate-[scan_2s_linear_infinite]"></div>
+            </div>
           </div>
         </div>
 
-        <div className="scanner-instructions">
-          <p>Position the QR code within the frame</p>
+        <div className="p-8 text-center bg-slate-900">
+          <p className="text-slate-400">Position the QR code within the frame to scan automatically</p>
         </div>
       </div>
 
-      <style jsx>{`
-        .qr-scanner {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: rgba(0, 0, 0, 0.9);
-          z-index: 1000;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .scanner-overlay {
-          width: 100%;
-          max-width: 500px;
-          padding: 20px;
-        }
-
-        .scanner-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 20px;
-        }
-
-        .scanner-header h2 {
-          color: white;
-          margin: 0;
-          font-size: 24px;
-        }
-
-        .close-button {
-          background: none;
-          border: none;
-          color: white;
-          font-size: 32px;
-          cursor: pointer;
-          padding: 0;
-          width: 40px;
-          height: 40px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .video-container {
-          position: relative;
-          width: 100%;
-          aspect-ratio: 1;
-          border-radius: 12px;
-          overflow: hidden;
-        }
-
-        .scanner-video {
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-        }
-
-        .scanner-frame {
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-          width: 70%;
-          height: 70%;
-          pointer-events: none;
-        }
-
-        .corner {
-          position: absolute;
-          width: 40px;
-          height: 40px;
-          border: 3px solid #00ff00;
-        }
-
-        .corner.top-left {
-          top: 0;
-          left: 0;
-          border-right: none;
-          border-bottom: none;
-        }
-
-        .corner.top-right {
-          top: 0;
-          right: 0;
-          border-left: none;
-          border-bottom: none;
-        }
-
-        .corner.bottom-left {
-          bottom: 0;
-          left: 0;
-          border-right: none;
-          border-top: none;
-        }
-
-        .corner.bottom-right {
-          bottom: 0;
-          right: 0;
-          border-left: none;
-          border-top: none;
-        }
-
-        .scanner-instructions {
-          text-align: center;
-          margin-top: 20px;
-        }
-
-        .scanner-instructions p {
-          color: white;
-          margin: 0;
-          font-size: 16px;
+      <style jsx global>{`
+        @keyframes scan {
+          0% { top: 0; opacity: 0; }
+          10% { opacity: 1; }
+          90% { opacity: 1; }
+          100% { top: 100%; opacity: 0; }
         }
       `}</style>
     </div>

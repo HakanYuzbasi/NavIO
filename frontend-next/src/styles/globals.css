@@ -1,64 +1,65 @@
-/**
- * Global Styles
- */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-* {
-  box-sizing: border-box;
-  padding: 0;
-  margin: 0;
-}
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+  }
 
-html,
-body {
-  max-width: 100vw;
-  overflow-x: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 0 0% 100%;
+  }
 
-body {
-  color: #111827;
-  background: #ffffff;
-}
+  /* High Contrast Mode */
+  .high-contrast {
+    --primary-600: #0000ff;
+    --indigo-600: #0000ff;
+  }
 
-a {
-  color: inherit;
-  text-decoration: none;
-}
+  .dark.high-contrast {
+    --primary-600: #ffff00;
+    --indigo-600: #ffff00;
+  }
 
-button {
-  font-family: inherit;
-}
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-50 transition-colors duration-300;
+  }
 
-/* Prevent zoom on input focus in iOS */
-@media screen and (max-width: 767px) {
-  input,
-  select,
-  textarea {
-    font-size: 16px;
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-bold tracking-tight text-slate-900 dark:text-white;
+  }
+
+  h1 {
+    @apply text-4xl sm:text-5xl;
+  }
+
+  h2 {
+    @apply text-3xl sm:text-4xl;
+  }
+
+  h3 {
+    @apply text-2xl sm:text-3xl;
   }
 }
 
-/* Remove tap highlight on mobile */
-* {
-  -webkit-tap-highlight-color: transparent;
-}
 
-/* Smooth scrolling */
-html {
-  scroll-behavior: smooth;
-}
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    /* IE and Edge */
+    scrollbar-width: none;
+    /* Firefox */
+  }
 
-/* Focus styles */
-:focus-visible {
-  outline: 2px solid #3b82f6;
-  outline-offset: 2px;
-}
-
-button:focus-visible {
-  outline: 2px solid #3b82f6;
-  outline-offset: 2px;
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
 }

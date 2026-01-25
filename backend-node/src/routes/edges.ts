@@ -132,4 +132,188 @@ router.delete('/:id', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * POST /api/edges/auto-generate/:venueId
+ * Automatically generate edges between nearby nodes
+ * Uses proximity-based connection with configurable max distance
+ */
+router.post('/auto-generate/:venueId', async (req: Request, res: Response) => {
+  try {
+    const { venueId } = req.params;
+    const {
+      maxDistance = 100,
+      kNearest = 4,
+      enableDirectPaths = true,  // Enable direct corridor path optimization
+      directPathMaxDistance = 500,  // Max distance for direct paths
+      gridTolerance = 20  // How close nodes must be to same row/column
+    } = req.body;
+
+    // Verify venue exists
+    const venue = dataStore.getVenue(venueId);
+    if (!venue) {
+      return res.status(404).json({ error: 'Venue not found' });
+    }
+
+    // Get all nodes for this venue
+    const nodes = dataStore.getNodesByVenue(venueId);
+    if (nodes.length < 2) {
+      return res.status(400).json({ error: 'Need at least 2 nodes to generate edges' });
+    }
+
+    // Calculate Euclidean distance between two nodes
+    const calcDistance = (n1: any, n2: any): number => {
+      return Math.sqrt(Math.pow(n2.x - n1.x, 2) + Math.pow(n2.y - n1.y, 2));
+    };
+
+    // Check if two nodes are in a straight line (horizontal or vertical)
+    const isNearlyStraight = (n1: any, n2: any): boolean => {
+      const dx = Math.abs(n2.x - n1.x);
+      const dy = Math.abs(n2.y - n1.y);
+      // Nearly horizontal: small y difference
+      // Nearly vertical: small x difference
+      return dx < gridTolerance || dy < gridTolerance;
+    };
+
+    // Get existing edges to avoid duplicates
+    const existingEdges = dataStore.getEdgesByVenue(venueId);
+    const edgeSet = new Set<string>();
+    existingEdges.forEach(e => {
+      edgeSet.add(`${e.fromNodeId}-${e.toNodeId}`);
+      edgeSet.add(`${e.toNodeId}-${e.fromNodeId}`);
+    });
+
+    const createdEdges: Edge[] = [];
+
+    // Helper to add edge if not duplicate
+    const addEdgeIfNew = (fromNode: any, toNode: any, distance: number): boolean => {
+      const edgeKey1 = `${fromNode.id}-${toNode.id}`;
+      const edgeKey2 = `${toNode.id}-${fromNode.id}`;
+
+      if (edgeSet.has(edgeKey1) || edgeSet.has(edgeKey2)) {
+        return false;
+      }
+
+      const edge: Edge = {
+        id: uuidv4(),
+        venueId,
+        fromNodeId: fromNode.id,
+        toNodeId: toNode.id,
+        distance: Math.round(distance * 10) / 10,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const created = dataStore.createEdge(edge);
+      createdEdges.push(created);
+      edgeSet.add(edgeKey1);
+      edgeSet.add(edgeKey2);
+      return true;
+    };
+
+    // PHASE 1: For each node, connect to k nearest neighbors within maxDistance
+    for (const node of nodes) {
+      const distances: { node: any; distance: number }[] = [];
+
+      for (const other of nodes) {
+        if (other.id === node.id) continue;
+        const dist = calcDistance(node, other);
+        if (dist <= maxDistance) {
+          distances.push({ node: other, distance: dist });
+        }
+      }
+
+      distances.sort((a, b) => a.distance - b.distance);
+      const nearest = distances.slice(0, kNearest);
+
+      for (const { node: neighbor, distance } of nearest) {
+        addEdgeIfNew(node, neighbor, distance);
+      }
+    }
+
+    const phase1Edges = createdEdges.length;
+
+    // PHASE 2: DIRECT CORRIDOR PATH OPTIMIZATION
+    // WARNING: This endpoint does NOT have access to the floor plan image,
+    // so it CANNOT validate that edges stay within corridors.
+    // For proper corridor-aware routing, use POST /api/analyze/navigation-graph instead.
+    //
+    // This phase only connects ADJACENT waypoints in rows/columns (skip 1, not skip 2+)
+    // to minimize the risk of crossing through booths.
+    let directPathEdges = 0;
+
+    if (enableDirectPaths) {
+      // Get only waypoint nodes (not booth nodes) for direct paths
+      const waypointNodes = nodes.filter(n => n.type === 'waypoint');
+
+      // Group by approximate row (y coordinate)
+      const nodesByRow = new Map<number, any[]>();
+      for (const node of waypointNodes) {
+        const row = Math.round(node.y / gridTolerance);
+        if (!nodesByRow.has(row)) nodesByRow.set(row, []);
+        nodesByRow.get(row)!.push(node);
+      }
+
+      // Group by approximate column (x coordinate)
+      const nodesByCol = new Map<number, any[]>();
+      for (const node of waypointNodes) {
+        const col = Math.round(node.x / gridTolerance);
+        if (!nodesByCol.has(col)) nodesByCol.set(col, []);
+        nodesByCol.get(col)!.push(node);
+      }
+
+      // Create horizontal direct edges - only connect ADJACENT waypoints in same row
+      // This is conservative to avoid crossing through booths without image validation
+      for (const [, rowNodes] of nodesByRow) {
+        if (rowNodes.length < 2) continue;
+        rowNodes.sort((a, b) => a.x - b.x);
+
+        for (let i = 0; i < rowNodes.length - 1; i++) {
+          const n1 = rowNodes[i];
+          const n2 = rowNodes[i + 1]; // Only connect to immediate neighbor
+          const dist = calcDistance(n1, n2);
+
+          // Only create edge if nodes are in the same corridor (close enough)
+          if (dist > maxDistance && dist <= directPathMaxDistance * 0.5) {
+            if (addEdgeIfNew(n1, n2, dist)) {
+              directPathEdges++;
+            }
+          }
+        }
+      }
+
+      // Create vertical direct edges - only connect ADJACENT waypoints in same column
+      for (const [, colNodes] of nodesByCol) {
+        if (colNodes.length < 2) continue;
+        colNodes.sort((a, b) => a.y - b.y);
+
+        for (let i = 0; i < colNodes.length - 1; i++) {
+          const n1 = colNodes[i];
+          const n2 = colNodes[i + 1]; // Only connect to immediate neighbor
+          const dist = calcDistance(n1, n2);
+
+          // Only create edge if nodes are in the same corridor (close enough)
+          if (dist > maxDistance && dist <= directPathMaxDistance * 0.5) {
+            if (addEdgeIfNew(n1, n2, dist)) {
+              directPathEdges++;
+            }
+          }
+        }
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `Generated ${createdEdges.length} edges (${phase1Edges} nearby + ${directPathEdges} direct paths)`,
+      edgesCreated: createdEdges.length,
+      nearbyEdges: phase1Edges,
+      directPathEdges,
+      totalEdges: existingEdges.length + createdEdges.length,
+      parameters: { maxDistance, kNearest, enableDirectPaths, directPathMaxDistance, gridTolerance },
+    });
+  } catch (error: any) {
+    console.error('Auto-generate edges error:', error);
+    res.status(500).json({ error: 'Failed to auto-generate edges' });
+  }
+});
+
 export default router;
