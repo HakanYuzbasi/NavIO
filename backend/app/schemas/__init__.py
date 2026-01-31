@@ -10,6 +10,15 @@ from .poi import POICreate, POIUpdate, POIResponse
 from .qr_anchor import QRAnchorCreate, QRAnchorUpdate, QRAnchorResponse
 from .route import RouteRequest, RouteResponse, RoutePreferences, Coordinate, RouteInstruction
 from .qr_scan import QRScanRequest, QRScanResponse
+from .user import (
+    UserCreate,
+    UserUpdate,
+    UserResponse,
+    UserAdminUpdate,
+    LoginRequest,
+    TokenResponse,
+    PasswordChangeRequest,
+)
 
 __all__ = [
     "FloorPlanCreate",
@@ -35,4 +44,11 @@ __all__ = [
     "RouteInstruction",
     "QRScanRequest",
     "QRScanResponse",
+    "UserCreate",
+    "UserUpdate",
+    "UserResponse",
+    "UserAdminUpdate",
+    "LoginRequest",
+    "TokenResponse",
+    "PasswordChangeRequest",
 ]

@@ -3,5 +3,6 @@ from .node import Node
 from .edge import Edge
 from .poi import POI
 from .qr_anchor import QRAnchor
+from .user import User, UserRole
 
-__all__ = ["FloorPlan", "Node", "Edge", "POI", "QRAnchor"]
+__all__ = ["FloorPlan", "Node", "Edge", "POI", "QRAnchor", "User", "UserRole"]
