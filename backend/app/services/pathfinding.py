@@ -1,18 +1,30 @@
 """
 Pathfinding service using NetworkX for calculating optimal routes.
+
+Features:
+- A* pathfinding algorithm for optimal route calculation
+- Redis caching for navigation graphs
+- Step-by-step navigation instructions
+- Accessibility-aware routing
 """
 import math
+import hashlib
+import logging
 from typing import List, Tuple, Optional
 from uuid import UUID
+
 import networkx as nx
 from sqlalchemy.orm import Session
 
 from app.models import Node, Edge
 from app.schemas import RouteResponse, RoutePreferences, Coordinate, RouteInstruction
+from app.core.cache import cache
+
+logger = logging.getLogger(__name__)
 
 
 class PathfindingService:
-    """Service for calculating routes using A* algorithm."""
+    """Service for calculating routes using A* algorithm with caching."""
 
     @staticmethod
     def calculate_euclidean_distance(x1: float, y1: float, x2: float, y2: float) -> float:
@@ -20,24 +32,49 @@ class PathfindingService:
         return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
     @staticmethod
+    def _get_preferences_hash(preferences: Optional[RoutePreferences]) -> str:
+        """Generate a hash of route preferences for cache keying."""
+        if preferences is None:
+            return "default"
+
+        pref_str = f"{preferences.accessible_only}:{preferences.avoid_stairs}:{preferences.shortest_distance}"
+        return hashlib.md5(pref_str.encode()).hexdigest()[:8]
+
+    @staticmethod
     def build_graph(
         db: Session,
         floor_plan_id: UUID,
-        preferences: Optional[RoutePreferences] = None
+        preferences: Optional[RoutePreferences] = None,
+        use_cache: bool = True
     ) -> Tuple[nx.Graph, dict]:
         """
         Build NetworkX graph from database nodes and edges.
+
+        Implements caching to avoid rebuilding the graph on every request.
 
         Args:
             db: Database session
             floor_plan_id: Floor plan UUID
             preferences: Route calculation preferences
+            use_cache: Whether to use Redis cache (default: True)
 
         Returns:
             Tuple of (graph, node_positions_dict)
         """
         if preferences is None:
             preferences = RoutePreferences()
+
+        floor_plan_id_str = str(floor_plan_id)
+        preferences_hash = PathfindingService._get_preferences_hash(preferences)
+
+        # Try to get from cache
+        if use_cache:
+            cached_graph = cache.get_graph(floor_plan_id_str, preferences_hash)
+            if cached_graph is not None:
+                logger.debug(f"Graph cache hit for floor plan {floor_plan_id_str}")
+                return cached_graph
+
+        logger.debug(f"Building graph for floor plan {floor_plan_id_str}")
 
         # Create undirected graph
         G = nx.Graph()
@@ -81,7 +118,29 @@ class PathfindingService:
                 edge_type=edge.edge_type
             )
 
-        return G, node_positions
+        graph_data = (G, node_positions)
+
+        # Cache the graph
+        if use_cache:
+            cache.set_graph(floor_plan_id_str, preferences_hash, graph_data)
+            logger.debug(f"Cached graph for floor plan {floor_plan_id_str}")
+
+        return graph_data
+
+    @staticmethod
+    def invalidate_cache(floor_plan_id: UUID) -> int:
+        """
+        Invalidate all cached graphs for a floor plan.
+
+        Call this when nodes or edges are modified.
+
+        Args:
+            floor_plan_id: Floor plan UUID
+
+        Returns:
+            Number of cache entries invalidated
+        """
+        return cache.invalidate_floor_plan(str(floor_plan_id))
 
     @staticmethod
     def calculate_route(
@@ -105,7 +164,7 @@ class PathfindingService:
             RouteResponse with path and instructions
         """
         try:
-            # Build graph
+            # Build graph (may use cache)
             G, node_positions = PathfindingService.build_graph(db, floor_plan_id, preferences)
 
             start_id = str(start_node_id)
@@ -176,11 +235,19 @@ class PathfindingService:
             instructions = PathfindingService._generate_instructions(G, path, node_positions)
 
             # Estimate time (assume walking speed of 1.4 m/s or 5 km/h)
-            # This is a rough estimate - adjust based on your scale
             estimated_time = int(total_distance / 1.4)
 
             # Convert path back to UUIDs
             path_uuids = [UUID(node_id) for node_id in path]
+
+            logger.info(
+                f"Route calculated: {len(path)} nodes, {total_distance:.1f} units",
+                extra={
+                    "floor_plan_id": str(floor_plan_id),
+                    "path_length": len(path),
+                    "distance": total_distance
+                }
+            )
 
             return RouteResponse(
                 success=True,
@@ -195,6 +262,7 @@ class PathfindingService:
             )
 
         except Exception as e:
+            logger.error(f"Error calculating route: {e}", exc_info=True)
             return RouteResponse(
                 success=False,
                 floor_plan_id=floor_plan_id,

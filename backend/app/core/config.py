@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     MAX_BOOTH_AREA: int = 100000
     DETECTION_THRESHOLD: int = 180
 
+    # Redis Cache
+    REDIS_URL: str = "redis://localhost:6379/0"
+    CACHE_TTL: int = 3600  # Cache TTL in seconds (1 hour)
+    CACHE_ENABLED: bool = True
+
     # Logging
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

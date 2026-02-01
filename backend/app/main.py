@@ -22,10 +22,12 @@ from slowapi.errors import RateLimitExceeded
 
 from app.core.config import settings
 from app.core.database import check_database_health
+from app.core.cache import cache
 from app.core.exceptions import register_exception_handlers
 from app.api.routes import router as api_router
 from app.api.detection import router as detection_router
 from app.api.auth import router as auth_router
+from app.api.docs import TAGS_METADATA, API_DESCRIPTION
 
 
 def setup_logging() -> None:
@@ -108,15 +110,24 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down application")
 
 
-# Create FastAPI application
+# Create FastAPI application with enhanced documentation
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="Indoor Wayfinding and Navigation API for building navigation, "
-                "QR code localization, and A* pathfinding.",
+    description=API_DESCRIPTION,
     version=settings.VERSION,
     docs_url="/docs",
     redoc_url="/redoc",
+    openapi_tags=TAGS_METADATA,
     lifespan=lifespan,
+    openapi_url="/api/v1/openapi.json",
+    contact={
+        "name": "NavIO Support",
+        "url": "https://github.com/HakanYuzbasi/NavIO",
+    },
+    license_info={
+        "name": "MIT",
+        "url": "https://opensource.org/licenses/MIT",
+    },
 )
 
 # Add rate limiter to app state
@@ -199,17 +210,32 @@ async def root():
     }
 
 
-@app.get("/health")
+@app.get("/health", tags=["health"])
 @limiter.exempt
 async def health_check(request: Request):
     """
     Comprehensive health check endpoint.
 
-    Returns service health including database connectivity and connection pool status.
+    Returns service health including database connectivity, cache status,
+    and connection pool information.
+
+    **Response Fields:**
+    - `status`: Overall health status (healthy, degraded, unhealthy)
+    - `service`: Service name
+    - `version`: API version
+    - `timestamp`: Current server time
+    - `components`: Individual component health statuses
     """
     db_health = check_database_health()
+    cache_health = cache.health_check()
 
-    overall_status = "healthy" if db_health["status"] == "healthy" else "degraded"
+    # Determine overall status
+    if db_health["status"] == "healthy" and cache_health.get("status") in ["healthy", "disabled"]:
+        overall_status = "healthy"
+    elif db_health["status"] == "healthy":
+        overall_status = "degraded"  # Cache unavailable but DB works
+    else:
+        overall_status = "unhealthy"
 
     return {
         "status": overall_status,
@@ -217,7 +243,8 @@ async def health_check(request: Request):
         "version": settings.VERSION,
         "timestamp": datetime.utcnow().isoformat(),
         "components": {
-            "database": db_health
+            "database": db_health,
+            "cache": cache_health
         }
     }
 
