@@ -1,12 +1,17 @@
 """
-Accurate Booth Detection Service
+Advanced Booth Cell Detection System
 
-Detects individual booth cells in floor plans by:
-1. Finding white rectangular areas on colored backgrounds
-2. Detecting internal grid lines/divisions within booth groups
-3. Creating POIs at the center of each individual cell
+Accurately detects individual booth cells in floor plans by:
+1. Multi-scale line detection for booth boundaries
+2. Adaptive thresholding for different floor plan styles
+3. Watershed segmentation for cell separation
+4. Contour hierarchy analysis for nested structures
+5. Shape validation for rectangular cells
 
-This handles floor plans where booths are subdivided into smaller cells.
+Handles:
+- White booths on colored backgrounds (gold, blue, red, etc.)
+- Thin internal dividing lines
+- Various booth sizes and shapes
 """
 import cv2
 import numpy as np
@@ -16,349 +21,539 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class BoothDetector:
+    """Advanced booth cell detector with multiple detection strategies."""
+
+    def __init__(self, image_path: str):
+        self.image_path = image_path
+        self.img = cv2.imread(image_path)
+        if self.img is None:
+            raise ValueError(f"Could not read image: {image_path}")
+
+        self.height, self.width = self.img.shape[:2]
+        self.gray = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
+        self.hsv = cv2.cvtColor(self.img, cv2.COLOR_BGR2HSV)
+
+        # Calculate adaptive parameters based on image size
+        self.min_cell_area = max(100, int(self.width * self.height * 0.00005))
+        self.max_cell_area = int(self.width * self.height * 0.05)
+
+        logger.info(f"Image: {self.width}x{self.height}, min_area={self.min_cell_area}, max_area={self.max_cell_area}")
+
+    def detect(self) -> List[Dict]:
+        """Main detection method - tries multiple strategies."""
+
+        # Strategy 1: Line-based cell segmentation (best for clean floor plans)
+        cells_line = self._detect_by_line_segmentation()
+
+        # Strategy 2: Contour hierarchy (good for nested structures)
+        cells_contour = self._detect_by_contour_hierarchy()
+
+        # Strategy 3: Watershed for touching regions
+        cells_watershed = self._detect_by_watershed()
+
+        # Merge results from all strategies
+        all_cells = self._merge_detections([cells_line, cells_contour, cells_watershed])
+
+        logger.info(f"Detection results - Line: {len(cells_line)}, Contour: {len(cells_contour)}, "
+                   f"Watershed: {len(cells_watershed)}, Merged: {len(all_cells)}")
+
+        # Categorize and name
+        all_cells = self._categorize_cells(all_cells)
+
+        return all_cells
+
+    def _detect_by_line_segmentation(self) -> List[Dict]:
+        """Detect cells by finding black lines and segmenting white regions."""
+
+        # Detect black lines with multiple thresholds to catch thin lines
+        black_mask = np.zeros_like(self.gray)
+
+        # Very dark pixels (definite lines)
+        _, dark = cv2.threshold(self.gray, 40, 255, cv2.THRESH_BINARY_INV)
+        black_mask = cv2.bitwise_or(black_mask, dark)
+
+        # Somewhat dark pixels (thinner lines, anti-aliased)
+        _, medium_dark = cv2.threshold(self.gray, 80, 255, cv2.THRESH_BINARY_INV)
+        # Only keep medium dark that's near definite dark (to avoid background)
+        kernel_connect = np.ones((5, 5), np.uint8)
+        near_dark = cv2.dilate(dark, kernel_connect, iterations=1)
+        medium_dark = cv2.bitwise_and(medium_dark, near_dark)
+        black_mask = cv2.bitwise_or(black_mask, medium_dark)
+
+        # Strengthen lines with morphological operations
+        # Use different kernels to preserve both horizontal and vertical lines
+        kernel_h = np.ones((1, 3), np.uint8)
+        kernel_v = np.ones((3, 1), np.uint8)
+
+        lines_h = cv2.dilate(black_mask, kernel_h, iterations=1)
+        lines_v = cv2.dilate(black_mask, kernel_v, iterations=1)
+        black_lines = cv2.bitwise_or(lines_h, lines_v)
+
+        # Detect white regions (booths)
+        _, white_mask = cv2.threshold(self.gray, 180, 255, cv2.THRESH_BINARY)
+
+        # Also detect very bright regions
+        _, very_white = cv2.threshold(self.gray, 220, 255, cv2.THRESH_BINARY)
+        white_mask = cv2.bitwise_or(white_mask, very_white)
+
+        # Fill small holes in white regions
+        kernel_fill = np.ones((3, 3), np.uint8)
+        white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel_fill, iterations=2)
+
+        # Subtract black lines from white to separate cells
+        # Dilate lines slightly more to ensure clean separation
+        kernel_sep = np.ones((2, 2), np.uint8)
+        black_separator = cv2.dilate(black_lines, kernel_sep, iterations=1)
+
+        cells_mask = cv2.subtract(white_mask, black_separator)
+
+        # Clean up
+        cells_mask = cv2.morphologyEx(cells_mask, cv2.MORPH_OPEN, kernel_fill, iterations=1)
+
+        # Find connected components
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+            cells_mask, connectivity=4  # Use 4-connectivity for better separation
+        )
+
+        cells = []
+        for i in range(1, num_labels):
+            x, y, w, h, area = stats[i]
+            cx, cy = centroids[i]
+
+            if self._is_valid_cell(x, y, w, h, area, labels == i):
+                cells.append(self._create_cell_dict(cx, cy, w, h, area))
+
+        return cells
+
+    def _detect_by_contour_hierarchy(self) -> List[Dict]:
+        """Detect cells using contour hierarchy to find enclosed regions."""
+
+        # Use adaptive thresholding for better edge detection
+        adaptive = cv2.adaptiveThreshold(
+            self.gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY, 15, 5
+        )
+
+        # Find contours with hierarchy
+        contours, hierarchy = cv2.findContours(
+            adaptive, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
+        )
+
+        if hierarchy is None or len(contours) == 0:
+            return []
+
+        hierarchy = hierarchy[0]
+        cells = []
+
+        for i, contour in enumerate(contours):
+            area = cv2.contourArea(contour)
+
+            if area < self.min_cell_area or area > self.max_cell_area:
+                continue
+
+            x, y, w, h = cv2.boundingRect(contour)
+
+            # Check if this contour has a parent (is enclosed)
+            parent_idx = hierarchy[i][3]
+
+            # Calculate contour properties
+            rect_area = w * h
+            if rect_area == 0:
+                continue
+
+            extent = area / rect_area
+
+            # Must be reasonably rectangular (extent > 0.5)
+            if extent < 0.45:
+                continue
+
+            # Check aspect ratio
+            aspect = max(w, h) / min(w, h) if min(w, h) > 0 else 999
+            if aspect > 8:
+                continue
+
+            # Calculate centroid
+            M = cv2.moments(contour)
+            if M['m00'] > 0:
+                cx = M['m10'] / M['m00']
+                cy = M['m01'] / M['m00']
+            else:
+                cx = x + w / 2
+                cy = y + h / 2
+
+            # Verify the region is mostly white (booth, not corridor)
+            mask = np.zeros(self.gray.shape, dtype=np.uint8)
+            cv2.drawContours(mask, [contour], -1, 255, -1)
+            mean_val = cv2.mean(self.gray, mask=mask)[0]
+
+            if mean_val > 150:  # Mostly white
+                cells.append(self._create_cell_dict(cx, cy, w, h, area))
+
+        return cells
+
+    def _detect_by_watershed(self) -> List[Dict]:
+        """Use watershed segmentation to separate touching cells."""
+
+        # Threshold to get white regions
+        _, binary = cv2.threshold(self.gray, 180, 255, cv2.THRESH_BINARY)
+
+        # Distance transform to find cell centers
+        dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
+
+        # Normalize and threshold distance transform
+        dist_normalized = cv2.normalize(dist, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        _, sure_fg = cv2.threshold(dist_normalized, 0.4 * dist_normalized.max(), 255, cv2.THRESH_BINARY)
+        sure_fg = sure_fg.astype(np.uint8)
+
+        # Find sure background (dilate binary)
+        kernel = np.ones((3, 3), np.uint8)
+        sure_bg = cv2.dilate(binary, kernel, iterations=2)
+
+        # Unknown region
+        unknown = cv2.subtract(sure_bg, sure_fg)
+
+        # Label markers
+        num_labels, markers = cv2.connectedComponents(sure_fg)
+        markers = markers + 1
+        markers[unknown == 255] = 0
+
+        # Apply watershed
+        img_color = cv2.cvtColor(self.gray, cv2.COLOR_GRAY2BGR)
+        markers = cv2.watershed(img_color, markers)
+
+        cells = []
+        for label in range(2, num_labels + 1):  # Skip background (1)
+            mask = (markers == label).astype(np.uint8) * 255
+
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if not contours:
+                continue
+
+            contour = max(contours, key=cv2.contourArea)
+            area = cv2.contourArea(contour)
+
+            if area < self.min_cell_area or area > self.max_cell_area:
+                continue
+
+            x, y, w, h = cv2.boundingRect(contour)
+
+            # Check rectangularity
+            rect_area = w * h
+            if rect_area == 0:
+                continue
+            extent = area / rect_area
+            if extent < 0.4:
+                continue
+
+            # Check aspect ratio
+            aspect = max(w, h) / min(w, h) if min(w, h) > 0 else 999
+            if aspect > 8:
+                continue
+
+            M = cv2.moments(contour)
+            if M['m00'] > 0:
+                cx = M['m10'] / M['m00']
+                cy = M['m01'] / M['m00']
+            else:
+                cx = x + w / 2
+                cy = y + h / 2
+
+            cells.append(self._create_cell_dict(cx, cy, w, h, area))
+
+        return cells
+
+    def _is_valid_cell(self, x: int, y: int, w: int, h: int, area: int,
+                       mask: Optional[np.ndarray] = None) -> bool:
+        """Validate if a detected region is a valid booth cell."""
+
+        # Area bounds
+        if area < self.min_cell_area or area > self.max_cell_area:
+            return False
+
+        # Aspect ratio (allow elongated booths but not extreme)
+        aspect = max(w, h) / min(w, h) if min(w, h) > 0 else 999
+        if aspect > 10:
+            return False
+
+        # Minimum dimensions
+        if w < 5 or h < 5:
+            return False
+
+        # Rectangularity (fill ratio)
+        rect_area = w * h
+        if rect_area > 0:
+            fill_ratio = area / rect_area
+            if fill_ratio < 0.35:  # Allow somewhat irregular shapes
+                return False
+
+        # Edge check - reject if touching image boundary significantly
+        edge_margin = 3
+        if x < edge_margin or y < edge_margin:
+            return False
+        if x + w > self.width - edge_margin or y + h > self.height - edge_margin:
+            return False
+
+        return True
+
+    def _create_cell_dict(self, cx: float, cy: float, w: int, h: int, area: int) -> Dict:
+        """Create a standardized cell dictionary."""
+        return {
+            'x': int(cx),
+            'y': int(self.height - cy),  # Flip Y coordinate
+            'width': int(w),
+            'height': int(h),
+            'area': int(area),
+            'img_y': int(cy)  # Keep original for visualization
+        }
+
+    def _merge_detections(self, detection_lists: List[List[Dict]]) -> List[Dict]:
+        """Merge detections from multiple strategies, removing duplicates.
+
+        Priority: Keep SMALLER, more specific detections (individual cells)
+        over larger booth group detections.
+        """
+
+        all_cells = []
+        for cells in detection_lists:
+            all_cells.extend(cells)
+
+        if not all_cells:
+            return []
+
+        # Sort by area ASCENDING - prefer smaller, more specific detections
+        # This ensures individual cells are kept over booth groups
+        all_cells.sort(key=lambda c: c['area'])
+
+        # Remove duplicates using bounding box overlap
+        merged = []
+
+        for cell in all_cells:
+            is_duplicate = False
+
+            # Get bounding box for this cell
+            cx, cy = cell['x'], cell['img_y']
+            w, h = cell['width'], cell['height']
+            x1, y1 = cx - w // 2, cy - h // 2
+            x2, y2 = cx + w // 2, cy + h // 2
+            area1 = w * h
+
+            for existing in merged:
+                # Get bounding box for existing cell
+                ex, ey = existing['x'], existing['img_y']
+                ew, eh = existing['width'], existing['height']
+                ex1, ey1 = ex - ew // 2, ey - eh // 2
+                ex2, ey2 = ex + ew // 2, ey + eh // 2
+                area2 = ew * eh
+
+                # Calculate intersection
+                ix1 = max(x1, ex1)
+                iy1 = max(y1, ey1)
+                ix2 = min(x2, ex2)
+                iy2 = min(y2, ey2)
+
+                if ix1 < ix2 and iy1 < iy2:
+                    intersection = (ix2 - ix1) * (iy2 - iy1)
+                    union = area1 + area2 - intersection
+                    iou = intersection / union if union > 0 else 0
+
+                    # Check how much of the NEW cell overlaps with existing
+                    overlap_ratio = intersection / area1 if area1 > 0 else 0
+
+                    # Only consider duplicate if:
+                    # 1. High IoU (nearly same detection) OR
+                    # 2. New cell significantly overlaps existing AND sizes are similar
+                    size_ratio = min(area1, area2) / max(area1, area2) if max(area1, area2) > 0 else 0
+
+                    if iou > 0.5:
+                        # Nearly identical detection
+                        is_duplicate = True
+                        break
+                    elif overlap_ratio > 0.7 and size_ratio > 0.5:
+                        # Significant overlap and similar size = same cell
+                        is_duplicate = True
+                        break
+
+                # Check centroid proximity for similar-sized cells only
+                dx = abs(cx - ex)
+                dy = abs(cell['y'] - existing['y'])
+                size_ratio = min(area1, area2) / max(area1, area2) if max(area1, area2) > 0 else 0
+
+                if size_ratio > 0.5:  # Similar size
+                    if dx < min(w, ew) * 0.3 and dy < min(h, eh) * 0.3:
+                        is_duplicate = True
+                        break
+
+            if not is_duplicate:
+                merged.append(cell)
+
+        # Sort by position (top to bottom, left to right)
+        merged.sort(key=lambda c: (-c['y'], c['x']))
+
+        return merged
+
+    def _categorize_cells(self, cells: List[Dict]) -> List[Dict]:
+        """Assign names and categories based on size."""
+
+        if not cells:
+            return []
+
+        areas = [c['area'] for c in cells]
+        median_area = np.median(areas)
+        q1 = np.percentile(areas, 25)
+        q3 = np.percentile(areas, 75)
+
+        counts = {'booth': 0, 'kiosk': 0, 'room': 0}
+
+        for cell in cells:
+            area = cell['area']
+
+            if area > q3 * 1.8:
+                counts['room'] += 1
+                cell['category'] = 'room'
+                cell['name'] = f"Room {counts['room']}"
+            elif area < q1 * 0.7:
+                counts['kiosk'] += 1
+                cell['category'] = 'kiosk'
+                cell['name'] = f"Kiosk {counts['kiosk']}"
+            else:
+                counts['booth'] += 1
+                cell['category'] = 'vendor'
+                cell['name'] = f"Booth {counts['booth']}"
+
+            cell['description'] = f"Auto-detected {cell['category']}"
+
+        logger.info(f"Categorized: {counts['booth']} booths, {counts['kiosk']} kiosks, {counts['room']} rooms")
+        return cells
+
+
+class WalkableAreaDetector:
+    """Detects walkable corridor areas in floor plans."""
+
+    def __init__(self, image_path: str):
+        self.image_path = image_path
+        self.img = cv2.imread(image_path)
+        if self.img is None:
+            raise ValueError(f"Could not read image: {image_path}")
+
+        self.height, self.width = self.img.shape[:2]
+        self.gray = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
+        self.hsv = cv2.cvtColor(self.img, cv2.COLOR_BGR2HSV)
+
+    def detect(self) -> np.ndarray:
+        """Detect walkable areas - returns binary mask."""
+
+        # Method 1: Color-based detection (corridors are colored, booths are white)
+        saturation = self.hsv[:, :, 1]
+        value = self.hsv[:, :, 2]
+
+        # Colored areas have saturation > 20 and are not too dark
+        is_colored = (saturation > 20) & (value > 50)
+
+        # Method 2: Not white and not black
+        not_white = self.gray < 200
+        not_black = self.gray > 40
+        is_middle = not_white & not_black
+
+        # Combine methods
+        walkable = is_colored | is_middle
+
+        # Remove areas that are too white (likely booths with slight color tint)
+        too_bright = self.gray > 220
+        walkable = walkable & ~too_bright
+
+        # Convert to uint8 mask
+        walkable_mask = walkable.astype(np.uint8) * 255
+
+        # Morphological cleanup
+        kernel = np.ones((5, 5), np.uint8)
+        walkable_mask = cv2.morphologyEx(walkable_mask, cv2.MORPH_CLOSE, kernel, iterations=3)
+        walkable_mask = cv2.morphologyEx(walkable_mask, cv2.MORPH_OPEN, kernel, iterations=2)
+
+        return walkable_mask
+
+    def get_walkable_skeleton(self) -> np.ndarray:
+        """Get skeleton/centerlines of walkable areas for navigation."""
+
+        walkable = self.detect()
+
+        # Skeletonize
+        from scipy import ndimage
+        skeleton = ndimage.binary_erosion(walkable > 0)
+
+        # Iterative thinning
+        kernel = np.ones((3, 3), np.uint8)
+        thin = walkable.copy()
+        while True:
+            eroded = cv2.erode(thin, kernel)
+            opened = cv2.morphologyEx(eroded, cv2.MORPH_OPEN, kernel)
+            temp = cv2.subtract(eroded, opened)
+            thin = eroded.copy()
+            if cv2.countNonZero(temp) == 0:
+                break
+
+        return thin
+
+
 def detect_booth_cells(image_path: str) -> List[Dict]:
-    """
-    Detect individual booth cells in a floor plan.
-
-    This function finds white rectangular booths on colored backgrounds
-    and detects internal divisions to identify each individual cell.
-
-    Args:
-        image_path: Path to floor plan image
-
-    Returns:
-        List of booth dictionaries with x, y coordinates at cell centers
-    """
-    logger.info(f"Detecting booth cells in: {image_path}")
-
-    # Read image
-    img = cv2.imread(image_path)
-    if img is None:
-        raise ValueError(f"Could not read image: {image_path}")
-
-    height, width = img.shape[:2]
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-    # Analyze image to determine threshold
-    mean_brightness = np.mean(gray)
-
-    # Find white areas (booths) - they're typically > 200 brightness
-    # The background is colored (lower brightness in grayscale)
-    _, booth_mask = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
-
-    # Also try Otsu for automatic threshold
-    _, otsu_mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    # Use whichever finds more white (booth) areas reasonably
-    booth_white_ratio = np.sum(booth_mask > 0) / (width * height)
-    otsu_white_ratio = np.sum(otsu_mask > 0) / (width * height)
-
-    # Choose the mask that gives reasonable booth coverage (20-70%)
-    if 0.2 < booth_white_ratio < 0.7:
-        mask = booth_mask
-        logger.info(f"Using threshold 200, white ratio: {booth_white_ratio:.1%}")
-    elif 0.2 < otsu_white_ratio < 0.7:
-        mask = otsu_mask
-        logger.info(f"Using Otsu threshold, white ratio: {otsu_white_ratio:.1%}")
-    else:
-        # Try different thresholds
-        for thresh in [180, 190, 210, 220, 170, 160]:
-            _, test_mask = cv2.threshold(gray, thresh, 255, cv2.THRESH_BINARY)
-            ratio = np.sum(test_mask > 0) / (width * height)
-            if 0.15 < ratio < 0.75:
-                mask = test_mask
-                logger.info(f"Using threshold {thresh}, white ratio: {ratio:.1%}")
-                break
-        else:
-            mask = booth_mask
-            logger.info(f"Fallback to threshold 200")
-
-    # Detect edges/lines within the white areas (booth divisions)
-    edges = cv2.Canny(gray, 50, 150)
-
-    # Find lines using HoughLinesP
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=30, minLineLength=20, maxLineGap=5)
-
-    # Create a line mask to separate booth cells
-    line_mask = np.zeros_like(gray)
-    if lines is not None:
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            cv2.line(line_mask, (x1, y1), (x2, y2), 255, 2)
-
-    # Subtract lines from booth mask to separate cells
-    separated_mask = cv2.subtract(mask, line_mask)
-
-    # Clean up
-    kernel_small = np.ones((3, 3), np.uint8)
-    kernel_medium = np.ones((5, 5), np.uint8)
-
-    # Remove small noise
-    separated_mask = cv2.morphologyEx(separated_mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
-    # Close small gaps within cells
-    separated_mask = cv2.morphologyEx(separated_mask, cv2.MORPH_CLOSE, kernel_small, iterations=1)
-
-    # Find contours of individual cells
-    contours, hierarchy = cv2.findContours(
-        separated_mask,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
-    )
-
-    logger.info(f"Found {len(contours)} initial contours")
-
-    # Filter and process contours
-    booths = []
-    min_area = max(100, (width * height) * 0.0001)  # Minimum 0.01% of image
-    max_area = (width * height) * 0.05  # Maximum 5% of image (single cell shouldn't be huge)
-
-    for contour in contours:
-        area = cv2.contourArea(contour)
-
-        if area < min_area:
-            continue
-
-        # Get bounding rectangle
-        x, y, w, h = cv2.boundingRect(contour)
-
-        # Skip if too large (might be multiple cells merged)
-        if area > max_area:
-            # Try to subdivide this large area
-            sub_booths = subdivide_large_booth(mask, x, y, w, h, height, min_area)
-            booths.extend(sub_booths)
-            continue
-
-        # Aspect ratio check - booths are roughly rectangular
-        aspect = w / h if h > 0 else 0
-        if aspect < 0.1 or aspect > 10:
-            continue
-
-        # Calculate center (flip Y for coordinate system)
-        center_x = x + w // 2
-        center_y = height - (y + h // 2)
-
-        booths.append({
-            'x': center_x,
-            'y': center_y,
-            'width': w,
-            'height': h,
-            'area': area
-        })
-
-    # Remove duplicates (overlapping detections)
-    booths = remove_duplicate_booths(booths)
-
-    # Sort by position (top to bottom, left to right)
-    booths.sort(key=lambda b: (-b['y'], b['x']))
-
-    # Assign names and categories
-    booths = categorize_booths(booths)
-
-    logger.info(f"Detected {len(booths)} booth cells")
-    return booths
+    """Main entry point for booth cell detection."""
+    detector = BoothDetector(image_path)
+    return detector.detect()
 
 
-def subdivide_large_booth(
-    mask: np.ndarray,
-    x: int, y: int, w: int, h: int,
-    img_height: int,
-    min_area: float
-) -> List[Dict]:
-    """
-    Subdivide a large booth area into individual cells using grid detection.
-    """
-    booths = []
-
-    # Extract the region
-    region = mask[y:y+h, x:x+w]
-
-    # Try to find grid lines within this region
-    # Look for vertical and horizontal gaps (dark lines)
-
-    # Scan for vertical divisions
-    col_sums = np.sum(region, axis=0)
-    col_threshold = np.max(col_sums) * 0.3
-
-    # Find gaps (low values indicate dividing lines)
-    v_gaps = []
-    in_gap = False
-    gap_start = 0
-    for i, val in enumerate(col_sums):
-        if val < col_threshold:
-            if not in_gap:
-                gap_start = i
-                in_gap = True
-        else:
-            if in_gap:
-                gap_center = (gap_start + i) // 2
-                v_gaps.append(gap_center)
-                in_gap = False
-
-    # Scan for horizontal divisions
-    row_sums = np.sum(region, axis=1)
-    row_threshold = np.max(row_sums) * 0.3
-
-    h_gaps = []
-    in_gap = False
-    gap_start = 0
-    for i, val in enumerate(row_sums):
-        if val < row_threshold:
-            if not in_gap:
-                gap_start = i
-                in_gap = True
-        else:
-            if in_gap:
-                gap_center = (gap_start + i) // 2
-                h_gaps.append(gap_center)
-                in_gap = False
-
-    # Create grid cells
-    v_positions = [0] + v_gaps + [w]
-    h_positions = [0] + h_gaps + [h]
-
-    for i in range(len(h_positions) - 1):
-        for j in range(len(v_positions) - 1):
-            cell_x = v_positions[j]
-            cell_y = h_positions[i]
-            cell_w = v_positions[j + 1] - v_positions[j]
-            cell_h = h_positions[i + 1] - h_positions[i]
-
-            if cell_w < 5 or cell_h < 5:
-                continue
-
-            cell_area = cell_w * cell_h
-            if cell_area < min_area:
-                continue
-
-            # Check if this cell is mostly white (is a booth)
-            cell_region = region[cell_y:cell_y+cell_h, cell_x:cell_x+cell_w]
-            white_ratio = np.sum(cell_region > 128) / (cell_w * cell_h) if cell_w * cell_h > 0 else 0
-
-            if white_ratio > 0.5:  # At least 50% white
-                center_x = x + cell_x + cell_w // 2
-                center_y = img_height - (y + cell_y + cell_h // 2)
-
-                booths.append({
-                    'x': center_x,
-                    'y': center_y,
-                    'width': cell_w,
-                    'height': cell_h,
-                    'area': cell_area
-                })
-
-    # If no subdivisions found, return the whole booth as one
-    if not booths:
-        center_x = x + w // 2
-        center_y = img_height - (y + h // 2)
-        booths.append({
-            'x': center_x,
-            'y': center_y,
-            'width': w,
-            'height': h,
-            'area': w * h
-        })
-
-    return booths
-
-
-def remove_duplicate_booths(booths: List[Dict], distance_threshold: int = 20) -> List[Dict]:
-    """Remove duplicate/overlapping booth detections."""
-    if not booths:
-        return []
-
-    # Sort by area (larger first)
-    sorted_booths = sorted(booths, key=lambda b: -b['area'])
-
-    kept = []
-    for booth in sorted_booths:
-        is_duplicate = False
-        for existing in kept:
-            dx = abs(booth['x'] - existing['x'])
-            dy = abs(booth['y'] - existing['y'])
-
-            if dx < distance_threshold and dy < distance_threshold:
-                is_duplicate = True
-                break
-
-        if not is_duplicate:
-            kept.append(booth)
-
-    return kept
-
-
-def categorize_booths(booths: List[Dict]) -> List[Dict]:
-    """Assign names and categories to booths based on size."""
-    if not booths:
-        return []
-
-    areas = [b['area'] for b in booths]
-    median_area = np.median(areas)
-
-    counts = {'booth': 0, 'kiosk': 0, 'room': 0}
-
-    for booth in booths:
-        area = booth['area']
-
-        if area > median_area * 3:
-            counts['room'] += 1
-            booth['category'] = 'room'
-            booth['name'] = f"Room {counts['room']}"
-            booth['description'] = 'Large space'
-        elif area < median_area * 0.3:
-            counts['kiosk'] += 1
-            booth['category'] = 'kiosk'
-            booth['name'] = f"Kiosk {counts['kiosk']}"
-            booth['description'] = 'Small kiosk'
-        else:
-            counts['booth'] += 1
-            booth['category'] = 'vendor'
-            booth['name'] = f"Booth {counts['booth']}"
-            booth['description'] = 'Vendor booth'
-
-    logger.info(f"Categorized: {counts}")
-    return booths
+def detect_walkable_areas(image_path: str) -> np.ndarray:
+    """Main entry point for walkable area detection."""
+    detector = WalkableAreaDetector(image_path)
+    return detector.detect()
 
 
 def visualize_detections(
     image_path: str,
     booths: List[Dict],
-    output_path: str
+    output_path: str,
+    show_rectangles: bool = True,
+    show_walkable: bool = False
 ) -> None:
-    """Create visualization with red dots at booth centers."""
+    """Create visualization with detected booths marked."""
+
     img = cv2.imread(image_path)
     height = img.shape[0]
 
+    # Optionally show walkable areas
+    if show_walkable:
+        walkable_mask = detect_walkable_areas(image_path)
+        # Overlay walkable areas in semi-transparent green
+        overlay = img.copy()
+        overlay[walkable_mask > 0] = [0, 200, 0]
+        img = cv2.addWeighted(img, 0.7, overlay, 0.3, 0)
+
     for booth in booths:
         x = booth['x']
-        y_img = height - booth['y']  # Convert back to image coords
+        y_img = booth.get('img_y', height - booth['y'])
 
         # Draw red filled circle at center
-        cv2.circle(img, (x, y_img), 8, (0, 0, 255), -1)
+        cv2.circle(img, (x, y_img), 5, (0, 0, 255), -1)
 
-        # Draw small rectangle outline
-        w = booth.get('width', 20)
-        h = booth.get('height', 20)
-        cv2.rectangle(
-            img,
-            (x - w//2, y_img - h//2),
-            (x + w//2, y_img + h//2),
-            (0, 255, 0), 1
-        )
+        # Draw rectangle outline
+        if show_rectangles:
+            w = booth.get('width', 20)
+            h = booth.get('height', 20)
+            x1 = x - w // 2
+            y1 = y_img - h // 2
+            x2 = x + w // 2
+            y2 = y_img + h // 2
+            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 1)
 
     cv2.imwrite(output_path, img)
-    logger.info(f"Saved visualization to {output_path}")
+    logger.info(f"Saved visualization: {output_path} ({len(booths)} cells)")
 
 
-# Convenience function for API
 def auto_detect_booths(image_path: str, method: str = 'auto') -> List[Dict]:
-    """
-    Main entry point for booth detection.
+    """Main entry point for booth detection - alias for detect_booth_cells."""
+    return detect_booth_cells(image_path)
 
-    Args:
-        image_path: Path to floor plan image
-        method: Detection method (ignored, always uses best method)
 
-    Returns:
-        List of detected booths with coordinates
-    """
+# Legacy function aliases for backward compatibility
+def adaptive_detect_booths(image_path: str) -> List[Dict]:
+    """Legacy alias."""
     return detect_booth_cells(image_path)

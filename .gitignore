@@ -69,3 +69,7 @@ static/uploads/
 # Misc
 .cache/
 *.bak
+
+# Generated detection visualizations
+*_detected.png
+*_walkable.png
