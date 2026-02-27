@@ -1,1 +1,0 @@
-# NavIO Backend Application

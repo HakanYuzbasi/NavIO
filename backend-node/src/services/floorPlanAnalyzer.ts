@@ -693,8 +693,8 @@ export class FloorPlanAnalyzer {
       }
     }
 
-    // Path is clear if at least 70% of points are in corridor
-    return clearCount / steps > 0.7;
+    // Path is clear if at least 95% of points are in corridor (strict validation)
+    return clearCount / steps > 0.95;
   }
 
   /**

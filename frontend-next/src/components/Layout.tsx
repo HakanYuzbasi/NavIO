@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import QRScanner from './QRScanner';
+import { Breadcrumbs } from './Breadcrumbs';
+import { OnboardingTutorial } from './OnboardingTutorial';
 
 interface LayoutProps {
     children: React.ReactNode;
@@ -322,9 +324,16 @@ export default function Layout({ children, title = 'NavIO' }: LayoutProps) {
                 {/* Dynamic Page Content */}
                 <main className="flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-950 scrollbar-hide">
                     <div className="max-w-7xl mx-auto p-4 lg:p-8 min-h-full">
+                        {/* Breadcrumbs */}
+                        <div className="mb-6">
+                            <Breadcrumbs />
+                        </div>
                         {children}
                     </div>
                 </main>
+
+                {/* Onboarding Tutorial */}
+                <OnboardingTutorial />
             </div>
         </div>
     );

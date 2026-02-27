@@ -173,6 +173,12 @@ export class PathfindingService {
    * Reduces the "jagged" grid look by straightening segments where line-of-sight is clear.
    */
   private smoothPath(path: Node[]): Node[] {
+    // SOTA: Path smoothing is disabled to prevent clipping through obstacles
+    // Since the pathfinder doesn't have access to the collision map,
+    // "string pulling" optimization is unsafe as it may create paths through physical barriers.
+    return path;
+    
+    /* Original smoothing logic disabled for safety
     if (path.length <= 2) return path;
 
     const smoothed: Node[] = [path[0]];
@@ -203,6 +209,7 @@ export class PathfindingService {
     }
 
     return smoothed;
+    */
   }
 
   /**
@@ -989,6 +996,89 @@ export class PathfindingService {
       isFullyConnected: components.length <= 1,
       components,
     };
+  }
+
+  /**
+   * Test all booth pairs for pathfinding validation
+   * TRAINING MODE: Tests every possible booth-to-booth route
+   * Reports paths that might be cutting through rooms (suspiciously long)
+   *
+   * @param venueId - The venue ID
+   * @returns Test results with statistics and flagged paths
+   */
+  async testAllBoothPairs(venueId: string): Promise<{
+    totalPairs: number;
+    successfulPaths: number;
+    failedPaths: number;
+    suspiciousPaths: { from: string; to: string; distance: number; pathLength: number; ratio: number }[];
+    summary: string;
+  }> {
+    const allNodes = dataStore.getNodesByVenue(venueId);
+    const boothNodes = allNodes.filter(n => n.type === 'booth');
+
+    // Group booth nodes by name to get unique booths
+    const uniqueBooths = new Map<string, typeof boothNodes[0]>();
+    for (const node of boothNodes) {
+      if (!uniqueBooths.has(node.name)) {
+        uniqueBooths.set(node.name, node);
+      }
+    }
+
+    const booths = Array.from(uniqueBooths.values());
+    const results = {
+      totalPairs: 0,
+      successfulPaths: 0,
+      failedPaths: 0,
+      suspiciousPaths: [] as { from: string; to: string; distance: number; pathLength: number; ratio: number }[],
+      summary: '',
+    };
+
+    // Test all pairs
+    for (let i = 0; i < booths.length; i++) {
+      for (let j = i + 1; j < booths.length; j++) {
+        results.totalPairs++;
+        const from = booths[i];
+        const to = booths[j];
+
+        try {
+          const route = await this.findPath(venueId, from.id, to.id);
+
+          if (route) {
+            results.successfulPaths++;
+
+            // Calculate straight-line distance
+            const straightLine = this.calculateHeuristic(from, to);
+            const pathDistance = route.totalDistance;
+            const ratio = pathDistance / straightLine;
+
+            // Flag paths that are >2x longer than straight line (potential room-crossing)
+            // A* should find near-optimal paths, so high ratios indicate detours or problems
+            if (ratio > 2.0) {
+              results.suspiciousPaths.push({
+                from: from.name,
+                to: to.name,
+                distance: Math.round(pathDistance),
+                pathLength: route.path.length,
+                ratio: Math.round(ratio * 100) / 100,
+              });
+            }
+          } else {
+            results.failedPaths++;
+          }
+        } catch (error) {
+          results.failedPaths++;
+        }
+      }
+    }
+
+    // Sort suspicious paths by ratio (worst first)
+    results.suspiciousPaths.sort((a, b) => b.ratio - a.ratio);
+
+    // Generate summary
+    const successRate = ((results.successfulPaths / results.totalPairs) * 100).toFixed(1);
+    results.summary = `Tested ${results.totalPairs} booth pairs: ${results.successfulPaths} successful (${successRate}%), ${results.failedPaths} failed, ${results.suspiciousPaths.length} suspicious (ratio > 2.0)`;
+
+    return results;
   }
 }
 

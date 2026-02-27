@@ -119,4 +119,19 @@ router.get('/reachable/:venueId/:nodeId', async (req: Request, res: Response) =>
   }
 });
 
+/**
+ * GET /api/route/test-all-pairs/:venueId
+ * Test pathfinding for all booth pairs in a venue
+ * Useful for training/validating the navigation system
+ */
+router.get('/test-all-pairs/:venueId', async (req: Request, res: Response) => {
+  try {
+    const { venueId } = req.params;
+    const results = await pathfindingService.testAllBoothPairs(venueId);
+    res.json(results);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to test booth pairs: ' + error.message });
+  }
+});
+
 export default router;

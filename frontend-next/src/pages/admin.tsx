@@ -10,7 +10,8 @@ import { NodeManager } from '../components/admin/NodeManager';
 import { EdgeManager } from '../components/admin/EdgeManager';
 import { QRGenerator } from '../components/admin/QRGenerator';
 import { AutoGraphGenerator } from '../components/admin/AutoGraphGenerator';
-import { Settings, Map, Share2, QrCode, Wand2, ArrowLeft } from 'lucide-react';
+import { AnalyticsDashboard } from '../components/admin/AnalyticsDashboard';
+import { Settings, Map, Share2, QrCode, Wand2, ArrowLeft, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export default function AdminPage() {
@@ -21,7 +22,7 @@ export default function AdminPage() {
   const [edges, setEdges] = useState<Edge[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'nodes' | 'edges' | 'qr' | 'analyze'>('nodes');
+  const [activeTab, setActiveTab] = useState<'nodes' | 'edges' | 'qr' | 'analyze' | 'analytics'>('nodes');
 
   useEffect(() => {
     loadVenues();
@@ -204,6 +205,16 @@ export default function AdminPage() {
                     <Wand2 size={16} />
                     Auto-Generate
                   </button>
+                  <button
+                    onClick={() => setActiveTab('analytics')}
+                    className={cn(
+                      "px-6 py-3 font-medium text-sm transition-colors border-b-2 flex items-center gap-2 whitespace-nowrap",
+                      activeTab === 'analytics' ? "border-primary-600 text-primary-600" : "border-transparent text-slate-500 hover:text-slate-700"
+                    )}
+                  >
+                    <BarChart3 size={16} />
+                    Analytics
+                  </button>
                 </div>
 
                 {/* Tab Content */}
@@ -236,6 +247,9 @@ export default function AdminPage() {
                       venue={selectedVenue}
                       onGraphGenerated={handleGraphGenerated}
                     />
+                  )}
+                  {activeTab === 'analytics' && (
+                    <AnalyticsDashboard />
                   )}
                 </div>
               </div>

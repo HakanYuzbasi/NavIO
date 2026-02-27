@@ -37,12 +37,23 @@ This will:
 
 ## Features
 
+### Core Navigation
 - **PWA Architecture**: No native app downloads required
 - **QR Code Localization**: Indoor positioning without GPS
 - **Visual Path Planning**: Draw walkable paths on floor plan images
 - **Point of Interest (POI) Management**: Tag and label rooms/locations
-- **Shortest Path Calculation**: A* pathfinding algorithm
+- **Shortest Path Calculation**: A* pathfinding algorithm with caching
 - **Interactive Map Interface**: Leaflet.js with custom coordinate system
+
+### Investor-Ready Features
+- **Real-Time Analytics Dashboard**: Track usage, QR scans, venue metrics
+- **Export Capabilities**: PDF reports, CSV data exports, JSON API responses
+- **User Onboarding**: Interactive tutorial flow for new users
+- **Admin Analytics Panel**: Comprehensive usage statistics and insights
+- **Third-Party Integrations**: Webhooks, API keys, embed codes
+- **Performance Optimizations**: Query caching, optimized database access, graph caching
+- **Mobile-Responsive Design**: Optimized for all device sizes
+- **Breadcrumb Navigation**: Intuitive navigation paths throughout the app
 
 ## Tech Stack
 
@@ -163,6 +174,26 @@ docker-compose down
 Once running, visit:
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
+
+### New API Endpoints
+
+#### Analytics
+- `GET /api/v1/analytics/overview` - Comprehensive analytics overview
+- `GET /api/v1/analytics/floor-plan/{id}` - Floor plan specific analytics
+- `GET /api/v1/analytics/usage` - Usage statistics over time
+- `GET /api/v1/analytics/export/csv` - Export analytics as CSV
+- `GET /api/v1/analytics/export/json` - Export analytics as JSON
+
+#### Export
+- `GET /api/v1/export/floor-plan/{id}/json` - Export floor plan as JSON
+- `GET /api/v1/export/floor-plan/{id}/csv` - Export floor plan as CSV
+- `GET /api/v1/export/floor-plan/{id}/pdf` - Export floor plan report as PDF
+
+#### Integrations
+- `POST /api/v1/webhooks/qr-scan` - Webhook for QR scan events
+- `GET /api/v1/integrations/health` - Integration health check
+- `POST /api/v1/integrations/export/venue-data` - Export venue data for integrations
+- `GET /api/v1/integrations/api-key` - Generate API key for third-party access
 
 ## Core Concepts
 

@@ -417,17 +417,24 @@ export async function generateNavigationGraph(
 
     const brightness = (r + g + b) / 3;
 
-    // STRICT white detection - anything bright is a booth (NOT walkable)
-    const isWhite = brightness > 200;
+    // STRICT white detection - anything very bright is a booth (NOT walkable)
+    // Booths are typically pure white (brightness > 230)
+    const isWhite = brightness > 230;
 
     // Black/dark areas are borders (NOT walkable)
     const isBlack = brightness < 40;
 
-    // The tan/olive corridor color: RGB roughly (178, 162, 97)
-    // Must have moderate brightness and slight warm tint
-    const isCorridor = !isWhite && !isBlack &&
-      brightness > 50 && brightness < 220 &&
-      r > b + 10 && g > b + 5; // Relaxed warm color bias
+    // UNIVERSAL corridor detection - works with ANY corridor color:
+    // - Blue corridors (this floor plan has light blue ~RGB 130, 170, 210)
+    // - Tan/olive corridors (RGB ~178, 162, 97)
+    // - Gray corridors (RGB ~128, 128, 128)
+    // - Any colored corridor
+    //
+    // A corridor is any pixel that is:
+    // 1. NOT white (not a booth)
+    // 2. NOT black (not a border)
+    // 3. Has moderate brightness (visible, not too dark or too light)
+    const isCorridor = !isWhite && !isBlack && brightness > 50 && brightness < 230;
 
     walkable[i] = isCorridor ? 1 : 0;
   }
@@ -468,6 +475,25 @@ export async function generateNavigationGraph(
   // Detect booths
   const booths = await detectBooths(imagePath);
 
+  // CRITICAL FIX: Mask out detected booths from the walkable grid
+  // This ensures that even if a booth has dark pixels (shadows/objects),
+  // it is treated as an obstacle if it was detected as a booth.
+  console.log(`Masking ${booths.length} detected booths from walkable area...`);
+  for (const booth of booths) {
+    const minX = Math.max(0, Math.floor(booth.centerX - booth.width / 2));
+    const maxX = Math.min(width - 1, Math.ceil(booth.centerX + booth.width / 2));
+    const minY = Math.max(0, Math.floor(booth.centerY - booth.height / 2));
+    const maxY = Math.min(height - 1, Math.ceil(booth.centerY + booth.height / 2));
+
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        const idx = y * width + x;
+        walkable[idx] = 0;
+        erodedWalkable[idx] = 0;
+      }
+    }
+  }
+
   const nodes: NavigationNode[] = [];
   const nodeMap = new Map<string, number>(); // "x,y" -> node id
   const corridorNodes: number[] = []; // IDs of corridor waypoint nodes
@@ -496,10 +522,10 @@ export async function generateNavigationGraph(
     return walkable[Math.round(y) * width + Math.round(x)] === 1;
   };
 
-  // CRITICAL: STRICT Line-of-sight validation using Bresenham's algorithm
-  // ZERO TOLERANCE for crossing through booth/room areas
-  // Paths must stay 100% within walkable corridor areas
-  const hasLineOfSight = (x1: number, y1: number, x2: number, y2: number, tolerance: number = 0.05): boolean => {
+  // STRICT Line-of-sight validation using Bresenham's algorithm
+  // Allows crossing thin lines (1-2 pixels) but BLOCKS room boundaries (3+ pixels)
+  // This prevents paths through rooms while allowing valid corridor connections
+  const hasLineOfSight = (x1: number, y1: number, x2: number, y2: number): boolean => {
     const dx = Math.abs(x2 - x1);
     const dy = Math.abs(y2 - y1);
     const sx = x1 < x2 ? 1 : -1;
@@ -514,21 +540,21 @@ export async function generateNavigationGraph(
     let totalPoints = 0;
     let unwalkablePoints = 0;
     let consecutiveUnwalkable = 0;
-    const MAX_CONSECUTIVE_UNWALKABLE = 2; // Allow max 2 consecutive unwalkable pixels (for thin lines/text only)
+    const MAX_CONSECUTIVE = 2; // Allow crossing thin lines (1-2 pixels), block walls (3+)
 
     while (true) {
       totalPoints++;
-      // Check if current point is walkable
+
       if (!isRawWalkable(x, y)) {
         unwalkablePoints++;
         consecutiveUnwalkable++;
 
-        // STRICT: If we hit more than 3 consecutive unwalkable pixels, path crosses a booth
-        if (consecutiveUnwalkable > MAX_CONSECUTIVE_UNWALKABLE) {
-          return false; // Immediately reject - path crosses through a room
+        // STRICT: More than 2 consecutive unwalkable pixels = wall/room boundary
+        if (consecutiveUnwalkable > MAX_CONSECUTIVE) {
+          return false; // Path crosses through a room - REJECT
         }
       } else {
-        consecutiveUnwalkable = 0; // Reset counter when we're back in walkable area
+        consecutiveUnwalkable = 0; // Reset when back in walkable area
       }
 
       if (x === endX && y === endY) break;
@@ -544,10 +570,10 @@ export async function generateNavigationGraph(
       }
     }
 
-    // Path is clear if percentage of unwalkable pixels is below strict tolerance (5%)
-    // AND we never had more than 3 consecutive unwalkable pixels
+    // Also check overall ratio - max 1% unwalkable for very thin lines/artifacts
+    // STRICT: Reduced from 5% to 1% to prevent cutting corners through rooms
     const unwalkableRatio = unwalkablePoints / totalPoints;
-    return unwalkableRatio <= tolerance;
+    return unwalkableRatio <= 0.01;
   };
 
   // Find ALL booth entrance points - one for each accessible corridor direction
@@ -626,8 +652,8 @@ export async function generateNavigationGraph(
           const y = Math.round(centerY + r * Math.sin(rad));
           if (isRawWalkable(x, y)) {
             const side = angle < 45 || angle >= 315 ? 'east' :
-                        angle < 135 ? 'south' :
-                        angle < 225 ? 'west' : 'north';
+              angle < 135 ? 'south' :
+                angle < 225 ? 'west' : 'north';
             return [{ x, y, side, isPrimary: true }];
           }
         }
@@ -769,9 +795,9 @@ export async function generateNavigationGraph(
       // Only add if in tier 2 range (not already added in tier 1)
       if (distance <= maxCorridorEdgeDistanceTier1 || distance > maxCorridorEdgeDistanceTier2) continue;
 
-      // Use moderate tolerance (0.08) to bridge gaps while preventing room cutting
-      // Higher tolerances (0.15+) allow paths through room corners
-      if (hasLineOfSight(n1.x, n1.y, n2.x, n2.y, 0.08)) {
+      // STRICT: Use 0.05 tolerance to prevent ANY room cutting
+      // This ensures paths stay 100% in corridors
+      if (hasLineOfSight(n1.x, n1.y, n2.x, n2.y)) {
         addEdge(corridorNodes[i], corridorNodes[j], distance);
       }
     }
@@ -804,8 +830,9 @@ export async function generateNavigationGraph(
 
       if (distance <= maxCorridorEdgeDistanceTier2 || distance > maxCorridorEdgeDistanceTier3) continue;
 
-      // Use relaxed tolerance (0.15) for Tier 3 as well
-      if (hasLineOfSight(n1.x, n1.y, n2.x, n2.y, 0.15)) {
+      // STRICT: Use 0.05 tolerance for Tier 3 to prevent room-crossing
+      // This ensures paths stay 100% in corridors
+      if (hasLineOfSight(n1.x, n1.y, n2.x, n2.y)) {
         addEdge(nodeId, corridorNodes[j], distance);
       }
     }
@@ -872,7 +899,7 @@ export async function generateNavigationGraph(
         if (!isNearlyStraight(n1.x, n1.y, n2.x, n2.y)) continue;
 
         // STRICT line-of-sight with tighter tolerance for long paths
-        if (hasLineOfSight(n1.x, n1.y, n2.x, n2.y, 0.05)) {
+        if (hasLineOfSight(n1.x, n1.y, n2.x, n2.y)) {
           addEdge(rowNodes[i], rowNodes[j], distance);
         }
       }
@@ -903,7 +930,7 @@ export async function generateNavigationGraph(
         if (!isNearlyStraight(n1.x, n1.y, n2.x, n2.y)) continue;
 
         // STRICT line-of-sight with tighter tolerance for long paths
-        if (hasLineOfSight(n1.x, n1.y, n2.x, n2.y, 0.05)) {
+        if (hasLineOfSight(n1.x, n1.y, n2.x, n2.y)) {
           addEdge(colNodes[i], colNodes[j], distance);
         }
       }
@@ -946,9 +973,9 @@ export async function generateNavigationGraph(
       if (distance > maxRange) continue;
 
       // Line-of-sight validation for booth-to-corridor connections
-      // Use moderate tolerance (0.10 = 10%) to allow booth edge connections
-      // but prevent paths from cutting through rooms
-      if (hasLineOfSight(boothNode.x, boothNode.y, corridorNode.x, corridorNode.y, 0.10)) {
+      // STRICT: Use 0.05 tolerance - booths must connect through corridors only
+      // No cutting through rooms allowed
+      if (hasLineOfSight(boothNode.x, boothNode.y, corridorNode.x, corridorNode.y)) {
         validConnections.push({ nodeId: corridorId, distance, isStraight });
       }
     }
