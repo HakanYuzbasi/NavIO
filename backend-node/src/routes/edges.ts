@@ -19,16 +19,16 @@ router.get('/', async (req: Request, res: Response) => {
     const { venueId } = req.query;
 
     if (venueId && typeof venueId === 'string') {
-      const edges = dataStore.getEdgesByVenue(venueId);
+      const edges = await dataStore.getEdgesByVenue(venueId);
       return res.json(edges);
     }
 
     // Return all edges
-    const allVenues = dataStore.getAllVenues();
+    const allVenues = await dataStore.getAllVenues();
     const allEdges: Edge[] = [];
-    allVenues.forEach(venue => {
-      allEdges.push(...dataStore.getEdgesByVenue(venue.id));
-    });
+    for (const venue of allVenues) {
+      allEdges.push(...await dataStore.getEdgesByVenue(venue.id));
+    }
 
     res.json(allEdges);
   } catch (error) {
@@ -42,7 +42,7 @@ router.get('/', async (req: Request, res: Response) => {
  */
 router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const edge = dataStore.getEdge(req.params.id);
+    const edge = await dataStore.getEdge(req.params.id);
     if (!edge) {
       return res.status(404).json({ error: 'Edge not found' });
     }
@@ -80,14 +80,14 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     // Verify venue exists
-    const venue = dataStore.getVenue(dto.venueId);
+    const venue = await dataStore.getVenue(dto.venueId);
     if (!venue) {
       return res.status(404).json({ error: 'Venue not found' });
     }
 
     // Verify both nodes exist and belong to the venue
-    const fromNode = dataStore.getNode(dto.fromNodeId);
-    const toNode = dataStore.getNode(dto.toNodeId);
+    const fromNode = await dataStore.getNode(dto.fromNodeId);
+    const toNode = await dataStore.getNode(dto.toNodeId);
 
     if (!fromNode || !toNode) {
       return res.status(404).json({ error: 'One or both nodes not found' });
@@ -109,7 +109,7 @@ router.post('/', async (req: Request, res: Response) => {
       updatedAt: new Date(),
     };
 
-    const created = dataStore.createEdge(edge);
+    const created = await dataStore.createEdge(edge);
     res.status(201).json(created);
   } catch (error) {
     res.status(500).json({ error: 'Failed to create edge' });
@@ -122,7 +122,7 @@ router.post('/', async (req: Request, res: Response) => {
  */
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
-    const deleted = dataStore.deleteEdge(req.params.id);
+    const deleted = await dataStore.deleteEdge(req.params.id);
     if (!deleted) {
       return res.status(404).json({ error: 'Edge not found' });
     }
@@ -149,13 +149,13 @@ router.post('/auto-generate/:venueId', async (req: Request, res: Response) => {
     } = req.body;
 
     // Verify venue exists
-    const venue = dataStore.getVenue(venueId);
+    const venue = await dataStore.getVenue(venueId);
     if (!venue) {
       return res.status(404).json({ error: 'Venue not found' });
     }
 
     // Get all nodes for this venue
-    const nodes = dataStore.getNodesByVenue(venueId);
+    const nodes = await dataStore.getNodesByVenue(venueId);
     if (nodes.length < 2) {
       return res.status(400).json({ error: 'Need at least 2 nodes to generate edges' });
     }
@@ -165,17 +165,8 @@ router.post('/auto-generate/:venueId', async (req: Request, res: Response) => {
       return Math.sqrt(Math.pow(n2.x - n1.x, 2) + Math.pow(n2.y - n1.y, 2));
     };
 
-    // Check if two nodes are in a straight line (horizontal or vertical)
-    const isNearlyStraight = (n1: any, n2: any): boolean => {
-      const dx = Math.abs(n2.x - n1.x);
-      const dy = Math.abs(n2.y - n1.y);
-      // Nearly horizontal: small y difference
-      // Nearly vertical: small x difference
-      return dx < gridTolerance || dy < gridTolerance;
-    };
-
     // Get existing edges to avoid duplicates
-    const existingEdges = dataStore.getEdgesByVenue(venueId);
+    const existingEdges = await dataStore.getEdgesByVenue(venueId);
     const edgeSet = new Set<string>();
     existingEdges.forEach(e => {
       edgeSet.add(`${e.fromNodeId}-${e.toNodeId}`);
@@ -185,7 +176,7 @@ router.post('/auto-generate/:venueId', async (req: Request, res: Response) => {
     const createdEdges: Edge[] = [];
 
     // Helper to add edge if not duplicate
-    const addEdgeIfNew = (fromNode: any, toNode: any, distance: number): boolean => {
+    const addEdgeIfNew = async (fromNode: any, toNode: any, distance: number): Promise<boolean> => {
       const edgeKey1 = `${fromNode.id}-${toNode.id}`;
       const edgeKey2 = `${toNode.id}-${fromNode.id}`;
 
@@ -203,7 +194,7 @@ router.post('/auto-generate/:venueId', async (req: Request, res: Response) => {
         updatedAt: new Date(),
       };
 
-      const created = dataStore.createEdge(edge);
+      const created = await dataStore.createEdge(edge);
       createdEdges.push(created);
       edgeSet.add(edgeKey1);
       edgeSet.add(edgeKey2);
@@ -226,19 +217,13 @@ router.post('/auto-generate/:venueId', async (req: Request, res: Response) => {
       const nearest = distances.slice(0, kNearest);
 
       for (const { node: neighbor, distance } of nearest) {
-        addEdgeIfNew(node, neighbor, distance);
+        await addEdgeIfNew(node, neighbor, distance);
       }
     }
 
     const phase1Edges = createdEdges.length;
 
     // PHASE 2: DIRECT CORRIDOR PATH OPTIMIZATION
-    // WARNING: This endpoint does NOT have access to the floor plan image,
-    // so it CANNOT validate that edges stay within corridors.
-    // For proper corridor-aware routing, use POST /api/analyze/navigation-graph instead.
-    //
-    // This phase only connects ADJACENT waypoints in rows/columns (skip 1, not skip 2+)
-    // to minimize the risk of crossing through booths.
     let directPathEdges = 0;
 
     if (enableDirectPaths) {
@@ -262,19 +247,17 @@ router.post('/auto-generate/:venueId', async (req: Request, res: Response) => {
       }
 
       // Create horizontal direct edges - only connect ADJACENT waypoints in same row
-      // This is conservative to avoid crossing through booths without image validation
       for (const [, rowNodes] of nodesByRow) {
         if (rowNodes.length < 2) continue;
-        rowNodes.sort((a, b) => a.x - b.x);
+        rowNodes.sort((a: any, b: any) => a.x - b.x);
 
         for (let i = 0; i < rowNodes.length - 1; i++) {
           const n1 = rowNodes[i];
-          const n2 = rowNodes[i + 1]; // Only connect to immediate neighbor
+          const n2 = rowNodes[i + 1];
           const dist = calcDistance(n1, n2);
 
-          // Only create edge if nodes are in the same corridor (close enough)
           if (dist > maxDistance && dist <= directPathMaxDistance * 0.5) {
-            if (addEdgeIfNew(n1, n2, dist)) {
+            if (await addEdgeIfNew(n1, n2, dist)) {
               directPathEdges++;
             }
           }
@@ -284,16 +267,15 @@ router.post('/auto-generate/:venueId', async (req: Request, res: Response) => {
       // Create vertical direct edges - only connect ADJACENT waypoints in same column
       for (const [, colNodes] of nodesByCol) {
         if (colNodes.length < 2) continue;
-        colNodes.sort((a, b) => a.y - b.y);
+        colNodes.sort((a: any, b: any) => a.y - b.y);
 
         for (let i = 0; i < colNodes.length - 1; i++) {
           const n1 = colNodes[i];
-          const n2 = colNodes[i + 1]; // Only connect to immediate neighbor
+          const n2 = colNodes[i + 1];
           const dist = calcDistance(n1, n2);
 
-          // Only create edge if nodes are in the same corridor (close enough)
           if (dist > maxDistance && dist <= directPathMaxDistance * 0.5) {
-            if (addEdgeIfNew(n1, n2, dist)) {
+            if (await addEdgeIfNew(n1, n2, dist)) {
               directPathEdges++;
             }
           }

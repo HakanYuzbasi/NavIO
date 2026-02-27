@@ -152,13 +152,18 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       return `L ${node.x} ${node.y}`;
     }).join(' ');
 
+    // Scale factor: keeps markers/labels at a consistent screen-pixel size
+    // regardless of the current zoom level. When zoomed in viewBox shrinks,
+    // so s < 1 → SVG sizes shrink → same apparent px. Vice-versa for zoom out.
+    const s = viewBox.width / (venue.width || 1000);
+
     return (
       <g className="energy-path">
         {/* SOTA Liquid Core */}
         <path
           d={pathData}
           stroke="rgba(79, 70, 229, 0.8)"
-          strokeWidth="6"
+          strokeWidth={6 * s}
           fill="none"
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -168,72 +173,79 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         <path
           d={pathData}
           stroke="url(#energyGradient)"
-          strokeWidth="4"
+          strokeWidth={4 * s}
           fill="none"
-          strokeDasharray="4,16"
+          strokeDasharray={`${4 * s},${16 * s}`}
           strokeLinecap="round"
           className="animate-energy-flow"
         />
 
-        {/* Improved Turn Markers */}
-        {turnPoints && turnPoints.map((tp, index) => (
-          <g key={`turn-${index}`} className="marker-group drop-shadow-lg">
-            {/* Soft Outer Glow */}
-            <circle
-              cx={tp.node.x}
-              cy={tp.node.y}
-              r={tp.type === 'start' || tp.type === 'destination' ? 16 : 12}
-              fill={tp.type === 'start' ? 'rgba(16, 185, 129, 0.2)' : tp.type === 'destination' ? 'rgba(99, 102, 241, 0.2)' : 'rgba(245, 158, 11, 0.2)'}
-            />
-            {/* Main Ring */}
-            <circle
-              cx={tp.node.x}
-              cy={tp.node.y}
-              r={tp.type === 'start' || tp.type === 'destination' ? 12 : 10}
-              fill={
-                tp.type === 'start' ? '#10b981' :
-                  tp.type === 'destination' ? '#6366f1' :
-                    '#f59e0b'
-              }
-              stroke="white"
-              strokeWidth="2.5"
-            />
-            <text
-              x={tp.node.x}
-              y={tp.node.y + 4}
-              textAnchor="middle"
-              fontSize="12"
-              fill="white"
-              fontWeight="900"
-              style={{ pointerEvents: 'none', userSelect: 'none' }}
-            >
-              {tp.type === 'start' ? '↑' :
-                tp.type === 'destination' ? '★' :
-                  tp.type === 'turn-left' ? '←' : '→'}
-            </text>
+        {/* Turn Markers — zoom-scaled for consistent apparent size */}
+        {turnPoints && turnPoints.map((tp, index) => {
+          const isEndpoint = tp.type === 'start' || tp.type === 'destination';
+          return (
+            <g key={`turn-${index}`} transform={`translate(${tp.node.x}, ${tp.node.y})`}>
+              <g transform={`scale(${s})`}>
+                {/* Soft Outer Glow */}
+                <circle
+                  cx={0}
+                  cy={0}
+                  r={isEndpoint ? 16 : 12}
+                  fill={tp.type === 'start' ? 'rgba(16, 185, 129, 0.2)' : tp.type === 'destination' ? 'rgba(99, 102, 241, 0.2)' : 'rgba(245, 158, 11, 0.2)'}
+                />
+                {/* Main Ring */}
+                <circle
+                  cx={0}
+                  cy={0}
+                  r={isEndpoint ? 12 : 10}
+                  fill={
+                    tp.type === 'start' ? '#10b981' :
+                      tp.type === 'destination' ? '#6366f1' :
+                        '#f59e0b'
+                  }
+                  stroke="white"
+                  strokeWidth="2.5"
+                />
+                <text
+                  x={0}
+                  y={4}
+                  textAnchor="middle"
+                  fontSize="12"
+                  fill="white"
+                  fontWeight="900"
+                  style={{ pointerEvents: 'none', userSelect: 'none' }}
+                >
+                  {tp.type === 'start' ? '↑' :
+                    tp.type === 'destination' ? '★' :
+                      tp.type === 'turn-left' ? '←' : '→'}
+                </text>
 
-            {/* Instruction Label (Mini) */}
-            <g transform={`translate(${tp.node.x}, ${tp.node.y - 25})`}>
-              <rect
-                x="-40"
-                y="-10"
-                width="80"
-                height="18"
-                rx="9"
-                fill="rgba(31, 41, 55, 0.9)"
-              />
-              <text
-                textAnchor="middle"
-                fontSize="8"
-                fill="white"
-                fontWeight="bold"
-                y="2"
-              >
-                {tp.type === 'start' ? 'DEPART' : tp.type === 'destination' ? 'ARRIVE' : tp.instruction.toUpperCase()}
-              </text>
+                {/* Instruction Label — only for start/destination endpoints */}
+                {isEndpoint && (
+                  <g transform="translate(0, -25)">
+                    <rect
+                      x="-40"
+                      y="-10"
+                      width="80"
+                      height="18"
+                      rx="9"
+                      fill="rgba(31, 41, 55, 0.9)"
+                    />
+                    <text
+                      textAnchor="middle"
+                      fontSize="8"
+                      fill="white"
+                      fontWeight="bold"
+                      y="2"
+                    >
+                      {tp.type === 'start' ? 'DEPART' : 'ARRIVE'}
+                    </text>
+                  </g>
+                )}
+              </g>
             </g>
-          </g>
-        ))}
+          );
+        })}
       </g>
     );
   };
@@ -263,18 +275,14 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       }
     }
 
+    // Scale factor for consistent node marker size across zoom levels
+    const s = viewBox.width / (venue.width || 1000);
+
     return visibleNodes.map(node => {
-      const isCurrent = currentLocation?.id === node.id;
-      const isDestination = destination?.id === node.id;
-
-      // Don't render current/destination here if turnPoints are provided (they're rendered in route)
-      if (turnPoints && (isCurrent || isDestination)) {
-        return null;
-      }
-
-      // Skip rendering if this node is part of the active route (handled by turnPoints)
-      if (turnPoints && route?.some(n => n.id === node.id)) {
-        return null;
+      // Only hide nodes that have an explicit turn point marker rendered on the map
+      if (turnPoints) {
+        const hasTurnPointMarker = turnPoints.some(tp => tp.node.id === node.id);
+        if (hasTurnPointMarker) return null;
       }
 
       let fill = '#6b7280'; // Gray for inactive booths
@@ -298,10 +306,10 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
           <circle
             cx={node.x}
             cy={node.y}
-            r={radius}
+            r={radius * s}
             fill={fill}
             stroke="white"
-            strokeWidth="1"
+            strokeWidth={1 * s}
             opacity={0.7}
           />
         </g>

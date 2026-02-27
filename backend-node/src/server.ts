@@ -19,6 +19,8 @@ import routingRoutes from './routes/routing';
 import qrRoutes from './routes/qr';
 import floorPlanAnalysisRoutes from './routes/floorPlanAnalysis';
 import uploadRoutes from './routes/upload';
+import queueRoutes from './routes/queue';
+import analyticsRoutes from './routes/analytics';
 
 const app: Application = express();
 
@@ -70,6 +72,9 @@ app.use('/api/route', routingRoutes);
 app.use('/api/qr', qrRoutes);
 app.use('/api/analyze', floorPlanAnalysisRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/queue', queueRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/v1/analytics', analyticsRoutes); // Alias for existing AnalyticsDashboard
 
 // Root endpoint
 app.get('/', (req, res) => {

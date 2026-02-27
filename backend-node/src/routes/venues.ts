@@ -54,7 +54,7 @@ const router = Router();
  */
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const venues = dataStore.getAllVenues();
+    const venues = await dataStore.getAllVenues();
     res.json(venues);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch venues' });
@@ -67,7 +67,7 @@ router.get('/', async (req: Request, res: Response) => {
  */
 router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const venue = dataStore.getVenue(req.params.id);
+    const venue = await dataStore.getVenue(req.params.id);
     if (!venue) {
       return res.status(404).json({ error: 'Venue not found' });
     }
@@ -113,7 +113,7 @@ router.post('/', async (req: Request, res: Response) => {
       updatedAt: new Date(),
     };
 
-    const created = dataStore.createVenue(venue);
+    const created = await dataStore.createVenue(venue);
     res.status(201).json(created);
   } catch (error) {
     console.error('Create venue error:', error);
@@ -128,7 +128,7 @@ router.post('/', async (req: Request, res: Response) => {
 router.put('/:id', async (req: Request, res: Response) => {
   try {
     const updates: Partial<CreateVenueDTO> = req.body;
-    const updated = dataStore.updateVenue(req.params.id, updates);
+    const updated = await dataStore.updateVenue(req.params.id, updates);
 
     if (!updated) {
       return res.status(404).json({ error: 'Venue not found' });
@@ -146,7 +146,7 @@ router.put('/:id', async (req: Request, res: Response) => {
  */
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
-    const deleted = dataStore.deleteVenue(req.params.id);
+    const deleted = await dataStore.deleteVenue(req.params.id);
     if (!deleted) {
       return res.status(404).json({ error: 'Venue not found' });
     }
@@ -167,7 +167,7 @@ router.post('/:id/import-navigation-graph', async (req: Request, res: Response) 
     const { imagePath, gridSpacing = 15 } = req.body;
 
     // Verify venue exists
-    const venue = dataStore.getVenue(venueId);
+    const venue = await dataStore.getVenue(venueId);
     if (!venue) {
       return res.status(404).json({ error: 'Venue not found' });
     }
@@ -198,9 +198,9 @@ router.post('/:id/import-navigation-graph', async (req: Request, res: Response) 
     const navGraph = await generateNavigationGraph(resolvedImagePath, gridSpacing);
 
     // Clear existing nodes and edges for this venue
-    const existingNodes = dataStore.getNodesByVenue(venueId);
+    const existingNodes = await dataStore.getNodesByVenue(venueId);
     for (const node of existingNodes) {
-      dataStore.deleteNode(node.id);
+      await dataStore.deleteNode(node.id);
     }
 
     // Map from navigation graph node IDs to datastore node IDs
@@ -219,7 +219,7 @@ router.post('/:id/import-navigation-graph', async (req: Request, res: Response) 
         createdAt: new Date(),
         updatedAt: new Date(),
       };
-      dataStore.createNode(node);
+      await dataStore.createNode(node);
       nodeIdMap.set(navNode.id, nodeId);
     }
 
@@ -238,7 +238,7 @@ router.post('/:id/import-navigation-graph', async (req: Request, res: Response) 
           createdAt: new Date(),
           updatedAt: new Date(),
         };
-        dataStore.createEdge(edge);
+        await dataStore.createEdge(edge);
       }
     }
 

@@ -5,8 +5,20 @@
 
 import app from './server';
 import config from './config';
+import { runMigrations } from './db/migrate';
 
 const PORT = config.port;
+
+async function start() {
+  try {
+    await runMigrations();
+  } catch (err) {
+    console.error('Migration failed:', err);
+    process.exit(1);
+  }
+}
+
+start();
 
 const server = app.listen(PORT, () => {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

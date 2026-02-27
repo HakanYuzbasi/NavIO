@@ -100,3 +100,25 @@ export interface GraphNode {
   y: number;
   neighbors: { nodeId: string; distance: number }[];
 }
+
+export type QueueStatus = 'waiting' | 'active' | 'done' | 'cancelled';
+
+export interface QueueEntry {
+  id: string;
+  boothId: string;
+  visitorName?: string;
+  visitorPhone?: string;
+  status: QueueStatus;
+  position: number;
+  joinedAt: Date;
+  calledAt?: Date;
+  completedAt?: Date;
+  dwellSeconds?: number;
+}
+
+export interface ScanEvent {
+  id: string;
+  visitorId?: string;
+  boothId: string;
+  scannedAt: Date;
+}

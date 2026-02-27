@@ -1,206 +1,197 @@
 /**
- * In-Memory Data Store
- * Production Note: Replace with PostgreSQL/MongoDB for production
+ * PostgreSQL Data Store
+ * Async wrapper around pg queries — same public API as the old in-memory store
  */
 
+import pool from '../db/pool';
 import { Venue, Node, Edge, QRMapping } from '../types';
 
+/** Map a snake_case row to a camelCase Venue */
+function toVenue(row: any): Venue {
+  return {
+    id: row.id,
+    name: row.name,
+    mapImageUrl: row.map_image_url ?? undefined,
+    width: row.width ?? undefined,
+    height: row.height ?? undefined,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  };
+}
+
+/** Map a snake_case row to a camelCase Node */
+function toNode(row: any): Node {
+  return {
+    id: row.id,
+    venueId: row.venue_id,
+    name: row.name,
+    type: row.type,
+    x: row.x,
+    y: row.y,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  };
+}
+
+/** Map a snake_case row to a camelCase Edge */
+function toEdge(row: any): Edge {
+  return {
+    id: row.id,
+    venueId: row.venue_id,
+    fromNodeId: row.from_node_id,
+    toNodeId: row.to_node_id,
+    distance: row.distance,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  };
+}
+
+/** Map a snake_case row to a camelCase QRMapping */
+function toQRMapping(row: any): QRMapping {
+  return {
+    qrId: row.qr_id,
+    nodeId: row.node_id,
+    createdAt: new Date(row.created_at),
+  };
+}
+
 class DataStore {
-  private venues: Map<string, Venue> = new Map();
-  private nodes: Map<string, Node> = new Map();
-  private edges: Map<string, Edge> = new Map();
-  private qrMappings: Map<string, QRMapping> = new Map();
+  // ─── Venue Operations ───
 
-  // Indexes for faster lookups
-  private nodesByVenue: Map<string, Set<string>> = new Map();
-  private edgesByVenue: Map<string, Set<string>> = new Map();
-  private edgesByNode: Map<string, Set<string>> = new Map();
-
-  // Venue Operations
-  createVenue(venue: Venue): Venue {
-    this.venues.set(venue.id, venue);
-    this.nodesByVenue.set(venue.id, new Set());
-    this.edgesByVenue.set(venue.id, new Set());
-    return venue;
+  async createVenue(venue: Venue): Promise<Venue> {
+    const { rows } = await pool.query(
+      `INSERT INTO venues (id, name, map_image_url, width, height, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [venue.id, venue.name, venue.mapImageUrl ?? null, venue.width ?? null, venue.height ?? null, venue.createdAt, venue.updatedAt]
+    );
+    return toVenue(rows[0]);
   }
 
-  getVenue(id: string): Venue | undefined {
-    return this.venues.get(id);
+  async getVenue(id: string): Promise<Venue | undefined> {
+    const { rows } = await pool.query('SELECT * FROM venues WHERE id = $1', [id]);
+    return rows.length ? toVenue(rows[0]) : undefined;
   }
 
-  getAllVenues(): Venue[] {
-    return Array.from(this.venues.values());
+  async getAllVenues(): Promise<Venue[]> {
+    const { rows } = await pool.query('SELECT * FROM venues ORDER BY created_at');
+    return rows.map(toVenue);
   }
 
-  updateVenue(id: string, updates: Partial<Venue>): Venue | undefined {
-    const venue = this.venues.get(id);
+  async updateVenue(id: string, updates: Partial<Venue>): Promise<Venue | undefined> {
+    const venue = await this.getVenue(id);
     if (!venue) return undefined;
 
-    const updated = { ...venue, ...updates, updatedAt: new Date() };
-    this.venues.set(id, updated);
-    return updated;
+    const merged = { ...venue, ...updates, updatedAt: new Date() };
+    const { rows } = await pool.query(
+      `UPDATE venues SET name=$1, map_image_url=$2, width=$3, height=$4, updated_at=$5
+       WHERE id=$6 RETURNING *`,
+      [merged.name, merged.mapImageUrl ?? null, merged.width ?? null, merged.height ?? null, merged.updatedAt, id]
+    );
+    return rows.length ? toVenue(rows[0]) : undefined;
   }
 
-  deleteVenue(id: string): boolean {
-    // Delete all related data
-    const nodes = this.nodesByVenue.get(id) || new Set();
-    nodes.forEach(nodeId => {
-      this.deleteNode(nodeId);
-    });
-
-    const edges = this.edgesByVenue.get(id) || new Set();
-    edges.forEach(edgeId => {
-      this.edges.delete(edgeId);
-    });
-
-    this.nodesByVenue.delete(id);
-    this.edgesByVenue.delete(id);
-    return this.venues.delete(id);
+  async deleteVenue(id: string): Promise<boolean> {
+    const { rowCount } = await pool.query('DELETE FROM venues WHERE id = $1', [id]);
+    return (rowCount ?? 0) > 0;
   }
 
-  // Node Operations
-  createNode(node: Node): Node {
-    this.nodes.set(node.id, node);
+  // ─── Node Operations ───
 
-    const venueNodes = this.nodesByVenue.get(node.venueId) || new Set();
-    venueNodes.add(node.id);
-    this.nodesByVenue.set(node.venueId, venueNodes);
-
-    this.edgesByNode.set(node.id, new Set());
-    return node;
+  async createNode(node: Node): Promise<Node> {
+    const { rows } = await pool.query(
+      `INSERT INTO nodes (id, venue_id, name, type, x, y, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [node.id, node.venueId, node.name, node.type, node.x, node.y, node.createdAt, node.updatedAt]
+    );
+    return toNode(rows[0]);
   }
 
-  getNode(id: string): Node | undefined {
-    return this.nodes.get(id);
+  async getNode(id: string): Promise<Node | undefined> {
+    const { rows } = await pool.query('SELECT * FROM nodes WHERE id = $1', [id]);
+    return rows.length ? toNode(rows[0]) : undefined;
   }
 
-  getNodesByVenue(venueId: string): Node[] {
-    const nodeIds = this.nodesByVenue.get(venueId) || new Set();
-    return Array.from(nodeIds).map(id => this.nodes.get(id)).filter(Boolean) as Node[];
+  async getNodesByVenue(venueId: string): Promise<Node[]> {
+    const { rows } = await pool.query('SELECT * FROM nodes WHERE venue_id = $1', [venueId]);
+    return rows.map(toNode);
   }
 
-  updateNode(id: string, updates: Partial<Node>): Node | undefined {
-    const node = this.nodes.get(id);
+  async updateNode(id: string, updates: Partial<Node>): Promise<Node | undefined> {
+    const node = await this.getNode(id);
     if (!node) return undefined;
 
-    const updated = { ...node, ...updates, updatedAt: new Date() };
-    this.nodes.set(id, updated);
-    return updated;
+    const merged = { ...node, ...updates, updatedAt: new Date() };
+    const { rows } = await pool.query(
+      `UPDATE nodes SET name=$1, type=$2, x=$3, y=$4, updated_at=$5
+       WHERE id=$6 RETURNING *`,
+      [merged.name, merged.type, merged.x, merged.y, merged.updatedAt, id]
+    );
+    return rows.length ? toNode(rows[0]) : undefined;
   }
 
-  deleteNode(id: string): boolean {
-    const node = this.nodes.get(id);
-    if (!node) return false;
-
-    // Remove from venue index
-    const venueNodes = this.nodesByVenue.get(node.venueId);
-    if (venueNodes) {
-      venueNodes.delete(id);
-    }
-
-    // Delete all edges connected to this node
-    const edgeIds = this.edgesByNode.get(id) || new Set();
-    edgeIds.forEach(edgeId => {
-      this.edges.delete(edgeId);
-    });
-    this.edgesByNode.delete(id);
-
-    // Remove QR mappings
-    for (const [qrId, mapping] of this.qrMappings.entries()) {
-      if (mapping.nodeId === id) {
-        this.qrMappings.delete(qrId);
-      }
-    }
-
-    return this.nodes.delete(id);
+  async deleteNode(id: string): Promise<boolean> {
+    const { rowCount } = await pool.query('DELETE FROM nodes WHERE id = $1', [id]);
+    return (rowCount ?? 0) > 0;
   }
 
-  // Edge Operations
-  createEdge(edge: Edge): Edge {
-    this.edges.set(edge.id, edge);
+  // ─── Edge Operations ───
 
-    const venueEdges = this.edgesByVenue.get(edge.venueId) || new Set();
-    venueEdges.add(edge.id);
-    this.edgesByVenue.set(edge.venueId, venueEdges);
-
-    // Add to both nodes' edge lists
-    const fromEdges = this.edgesByNode.get(edge.fromNodeId) || new Set();
-    fromEdges.add(edge.id);
-    this.edgesByNode.set(edge.fromNodeId, fromEdges);
-
-    const toEdges = this.edgesByNode.get(edge.toNodeId) || new Set();
-    toEdges.add(edge.id);
-    this.edgesByNode.set(edge.toNodeId, toEdges);
-
-    return edge;
+  async createEdge(edge: Edge): Promise<Edge> {
+    const { rows } = await pool.query(
+      `INSERT INTO edges (id, venue_id, from_node_id, to_node_id, distance, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [edge.id, edge.venueId, edge.fromNodeId, edge.toNodeId, edge.distance, edge.createdAt, edge.updatedAt]
+    );
+    return toEdge(rows[0]);
   }
 
-  getEdge(id: string): Edge | undefined {
-    return this.edges.get(id);
+  async getEdge(id: string): Promise<Edge | undefined> {
+    const { rows } = await pool.query('SELECT * FROM edges WHERE id = $1', [id]);
+    return rows.length ? toEdge(rows[0]) : undefined;
   }
 
-  getEdgesByVenue(venueId: string): Edge[] {
-    const edgeIds = this.edgesByVenue.get(venueId) || new Set();
-    return Array.from(edgeIds).map(id => this.edges.get(id)).filter(Boolean) as Edge[];
+  async getEdgesByVenue(venueId: string): Promise<Edge[]> {
+    const { rows } = await pool.query('SELECT * FROM edges WHERE venue_id = $1', [venueId]);
+    return rows.map(toEdge);
   }
 
-  getEdgesByNode(nodeId: string): Edge[] {
-    const edgeIds = this.edgesByNode.get(nodeId) || new Set();
-    return Array.from(edgeIds).map(id => this.edges.get(id)).filter(Boolean) as Edge[];
+  async getEdgesByNode(nodeId: string): Promise<Edge[]> {
+    const { rows } = await pool.query(
+      'SELECT * FROM edges WHERE from_node_id = $1 OR to_node_id = $1',
+      [nodeId]
+    );
+    return rows.map(toEdge);
   }
 
-  deleteEdge(id: string): boolean {
-    const edge = this.edges.get(id);
-    if (!edge) return false;
-
-    // Remove from venue index
-    const venueEdges = this.edgesByVenue.get(edge.venueId);
-    if (venueEdges) {
-      venueEdges.delete(id);
-    }
-
-    // Remove from node indexes
-    const fromEdges = this.edgesByNode.get(edge.fromNodeId);
-    if (fromEdges) {
-      fromEdges.delete(id);
-    }
-
-    const toEdges = this.edgesByNode.get(edge.toNodeId);
-    if (toEdges) {
-      toEdges.delete(id);
-    }
-
-    return this.edges.delete(id);
+  async deleteEdge(id: string): Promise<boolean> {
+    const { rowCount } = await pool.query('DELETE FROM edges WHERE id = $1', [id]);
+    return (rowCount ?? 0) > 0;
   }
 
-  // QR Mapping Operations
-  createQRMapping(mapping: QRMapping): QRMapping {
-    this.qrMappings.set(mapping.qrId, mapping);
-    return mapping;
+  // ─── QR Mapping Operations ───
+
+  async createQRMapping(mapping: QRMapping): Promise<QRMapping> {
+    const { rows } = await pool.query(
+      `INSERT INTO qr_mappings (qr_id, node_id, created_at)
+       VALUES ($1, $2, $3) RETURNING *`,
+      [mapping.qrId, mapping.nodeId, mapping.createdAt]
+    );
+    return toQRMapping(rows[0]);
   }
 
-  getQRMapping(qrId: string): QRMapping | undefined {
-    return this.qrMappings.get(qrId);
+  async getQRMapping(qrId: string): Promise<QRMapping | undefined> {
+    const { rows } = await pool.query('SELECT * FROM qr_mappings WHERE qr_id = $1', [qrId]);
+    return rows.length ? toQRMapping(rows[0]) : undefined;
   }
 
-  getQRMappingsByNode(nodeId: string): QRMapping[] {
-    return Array.from(this.qrMappings.values())
-      .filter(mapping => mapping.nodeId === nodeId);
+  async getQRMappingsByNode(nodeId: string): Promise<QRMapping[]> {
+    const { rows } = await pool.query('SELECT * FROM qr_mappings WHERE node_id = $1', [nodeId]);
+    return rows.map(toQRMapping);
   }
 
-  deleteQRMapping(qrId: string): boolean {
-    return this.qrMappings.delete(qrId);
-  }
-
-  // Utility
-  clear(): void {
-    this.venues.clear();
-    this.nodes.clear();
-    this.edges.clear();
-    this.qrMappings.clear();
-    this.nodesByVenue.clear();
-    this.edgesByVenue.clear();
-    this.edgesByNode.clear();
+  async deleteQRMapping(qrId: string): Promise<boolean> {
+    const { rowCount } = await pool.query('DELETE FROM qr_mappings WHERE qr_id = $1', [qrId]);
+    return (rowCount ?? 0) > 0;
   }
 }
 

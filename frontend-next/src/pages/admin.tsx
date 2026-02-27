@@ -11,7 +11,8 @@ import { EdgeManager } from '../components/admin/EdgeManager';
 import { QRGenerator } from '../components/admin/QRGenerator';
 import { AutoGraphGenerator } from '../components/admin/AutoGraphGenerator';
 import { AnalyticsDashboard } from '../components/admin/AnalyticsDashboard';
-import { Settings, Map, Share2, QrCode, Wand2, ArrowLeft, BarChart3 } from 'lucide-react';
+import { DwellTimeDashboard } from '../components/admin/DwellTimeDashboard';
+import { Settings, Map, Share2, QrCode, Wand2, ArrowLeft, BarChart3, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export default function AdminPage() {
@@ -22,7 +23,7 @@ export default function AdminPage() {
   const [edges, setEdges] = useState<Edge[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'nodes' | 'edges' | 'qr' | 'analyze' | 'analytics'>('nodes');
+  const [activeTab, setActiveTab] = useState<'nodes' | 'edges' | 'qr' | 'analyze' | 'analytics' | 'dwell'>('nodes');
 
   useEffect(() => {
     loadVenues();
@@ -215,6 +216,16 @@ export default function AdminPage() {
                     <BarChart3 size={16} />
                     Analytics
                   </button>
+                  <button
+                    onClick={() => setActiveTab('dwell')}
+                    className={cn(
+                      "px-6 py-3 font-medium text-sm transition-colors border-b-2 flex items-center gap-2 whitespace-nowrap",
+                      activeTab === 'dwell' ? "border-primary-600 text-primary-600" : "border-transparent text-slate-500 hover:text-slate-700"
+                    )}
+                  >
+                    <Clock size={16} />
+                    Dwell Time
+                  </button>
                 </div>
 
                 {/* Tab Content */}
@@ -250,6 +261,9 @@ export default function AdminPage() {
                   )}
                   {activeTab === 'analytics' && (
                     <AnalyticsDashboard />
+                  )}
+                  {activeTab === 'dwell' && (
+                    <DwellTimeDashboard />
                   )}
                 </div>
               </div>

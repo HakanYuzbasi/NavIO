@@ -167,7 +167,9 @@ export default function VenueNavigationPage() {
       return [];
     }
 
-    const path = route.path;
+    // Filter out synthetic orthogonal intermediates (L-bend waypoints) so turn
+    // detection only fires at real navigation decision points, not at every bend
+    const path = route.path.filter(n => !n.id.startsWith('ortho-'));
     const points: TurnPoint[] = [];
     let stepNumber = 1;
 

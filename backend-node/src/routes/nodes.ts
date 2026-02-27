@@ -19,16 +19,16 @@ router.get('/', async (req: Request, res: Response) => {
     const { venueId } = req.query;
 
     if (venueId && typeof venueId === 'string') {
-      const nodes = dataStore.getNodesByVenue(venueId);
+      const nodes = await dataStore.getNodesByVenue(venueId);
       return res.json(nodes);
     }
 
     // Return all nodes (not recommended for production with large datasets)
-    const allVenues = dataStore.getAllVenues();
+    const allVenues = await dataStore.getAllVenues();
     const allNodes: Node[] = [];
-    allVenues.forEach(venue => {
-      allNodes.push(...dataStore.getNodesByVenue(venue.id));
-    });
+    for (const venue of allVenues) {
+      allNodes.push(...await dataStore.getNodesByVenue(venue.id));
+    }
 
     res.json(allNodes);
   } catch (error) {
@@ -42,7 +42,7 @@ router.get('/', async (req: Request, res: Response) => {
  */
 router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const node = dataStore.getNode(req.params.id);
+    const node = await dataStore.getNode(req.params.id);
     if (!node) {
       return res.status(404).json({ error: 'Node not found' });
     }
@@ -74,7 +74,7 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     // Verify venue exists
-    const venue = dataStore.getVenue(dto.venueId);
+    const venue = await dataStore.getVenue(dto.venueId);
     if (!venue) {
       return res.status(404).json({ error: 'Venue not found' });
     }
@@ -90,7 +90,7 @@ router.post('/', async (req: Request, res: Response) => {
       updatedAt: new Date(),
     };
 
-    const created = dataStore.createNode(node);
+    const created = await dataStore.createNode(node);
     res.status(201).json(created);
   } catch (error) {
     res.status(500).json({ error: 'Failed to create node' });
@@ -112,7 +112,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       });
     }
 
-    const updated = dataStore.updateNode(req.params.id, updates);
+    const updated = await dataStore.updateNode(req.params.id, updates);
     if (!updated) {
       return res.status(404).json({ error: 'Node not found' });
     }
@@ -129,7 +129,7 @@ router.put('/:id', async (req: Request, res: Response) => {
  */
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
-    const deleted = dataStore.deleteNode(req.params.id);
+    const deleted = await dataStore.deleteNode(req.params.id);
     if (!deleted) {
       return res.status(404).json({ error: 'Node not found' });
     }

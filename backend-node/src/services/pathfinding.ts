@@ -9,10 +9,8 @@
  * - Adaptive path smoothing
  */
 
-import { Node, Edge, Graph, GraphNode, RouteResponse, DirectionStep } from '../types';
+import { Node, Graph, RouteResponse, DirectionStep } from '../types';
 import { dataStore } from '../models/store';
-
-type TurnDirection = 'left' | 'right' | 'straight' | 'slight-left' | 'slight-right' | 'u-turn';
 
 interface PriorityQueueItem {
   nodeId: string;
@@ -95,9 +93,9 @@ export class PathfindingService {
   /**
    * Build a graph structure from venue nodes and edges
    */
-  private buildGraph(venueId: string): Graph {
-    const nodes = dataStore.getNodesByVenue(venueId);
-    const edges = dataStore.getEdgesByVenue(venueId);
+  private async buildGraph(venueId: string): Promise<Graph> {
+    const nodes = await dataStore.getNodesByVenue(venueId);
+    const edges = await dataStore.getEdgesByVenue(venueId);
 
     const graph: Graph = {
       nodes: new Map(),
@@ -177,51 +175,81 @@ export class PathfindingService {
     // Since the pathfinder doesn't have access to the collision map,
     // "string pulling" optimization is unsafe as it may create paths through physical barriers.
     return path;
-    
-    /* Original smoothing logic disabled for safety
-    if (path.length <= 2) return path;
+  }
 
-    const smoothed: Node[] = [path[0]];
-    let currentIdx = 0;
+  /**
+   * Orthogonalize path segments.
+   * Converts any diagonal segments into strictly orthogonal (horizontal/vertical)
+   * L-shaped segments. Every turn is a clean 90-degree angle.
+   * No diagonal or angled lines — only 0°, 90°, 180° segments.
+   */
+  private orthogonalizePath(path: Node[]): Node[] {
+    if (path.length < 2) return path;
 
-    while (currentIdx < path.length - 1) {
-      let furthestVisibleIdx = currentIdx + 1;
+    const result: Node[] = [path[0]];
 
-      for (let nextIdx = currentIdx + 2; nextIdx < path.length; nextIdx++) {
-        const p1 = path[currentIdx];
-        const p2 = path[nextIdx];
-        const straightDist = this.calculateHeuristic(p1, p2);
+    for (let i = 0; i < path.length - 1; i++) {
+      const current = path[i];
+      const next = path[i + 1];
 
-        let pathDist = 0;
-        for (let k = currentIdx; k < nextIdx; k++) {
-          pathDist += this.calculateHeuristic(path[k], path[k + 1]);
-        }
+      const dx = next.x - current.x;
+      const dy = next.y - current.y;
 
-        if (pathDist <= straightDist * 1.05) {
-          furthestVisibleIdx = nextIdx;
-        } else {
-          break;
-        }
+      // Already aligned horizontally or vertically — no change needed
+      if (Math.abs(dx) < 0.5 || Math.abs(dy) < 0.5) {
+        result.push(next);
+        continue;
       }
 
-      smoothed.push(path[furthestVisibleIdx]);
-      currentIdx = furthestVisibleIdx;
+      // Diagonal segment detected — break into L-shape.
+      // Strategy: continue in the same axis as the previous segment to minimize turns.
+      let horizontalFirst = true;
+
+      if (result.length >= 2) {
+        const prev = result[result.length - 2];
+        const curr = result[result.length - 1];
+        const prevDx = Math.abs(curr.x - prev.x);
+        const prevDy = Math.abs(curr.y - prev.y);
+        // If previous segment was more horizontal, continue horizontal first
+        horizontalFirst = prevDx >= prevDy;
+      }
+
+      // Create intermediate waypoint for the L-bend
+      const intermediate: Node = {
+        id: `ortho-${current.id}-${next.id}`,
+        venueId: current.venueId,
+        name: '',
+        type: 'waypoint',
+        x: horizontalFirst ? next.x : current.x,
+        y: horizontalFirst ? current.y : next.y,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      result.push(intermediate);
+      result.push(next);
     }
 
-    return smoothed;
-    */
+    return result;
+  }
+
+  /**
+   * Calculate total distance of a path by summing segment lengths
+   */
+  private calculatePathDistance(path: Node[]): number {
+    let total = 0;
+    for (let i = 0; i < path.length - 1; i++) {
+      const dx = path[i + 1].x - path[i].x;
+      const dy = path[i + 1].y - path[i].y;
+      total += Math.sqrt(dx * dx + dy * dy);
+    }
+    return total;
   }
 
   /**
    * SOTA Bidirectional A* Search
    * Searches from both start and end simultaneously, meeting in the middle.
    * Typically 2x faster than unidirectional A* for large graphs.
-   *
-   * @param graph - The navigation graph
-   * @param startNodeId - Starting node ID
-   * @param endNodeId - Destination node ID
-   * @param allNodes - Map of all nodes
-   * @returns Path and distance, or null if no path exists
    */
   private bidirectionalAStar(
     graph: Graph,
@@ -384,11 +412,6 @@ export class PathfindingService {
    * IMPORTANT: This implementation adds a HIGH PENALTY for traversing through
    * booth nodes. Booth nodes should ONLY be used as start/end points, never
    * as intermediate waypoints. This keeps navigation paths in corridors.
-   *
-   * @param venueId - The venue containing the nodes
-   * @param startNodeId - Starting node ID
-   * @param endNodeId - Destination node ID
-   * @returns RouteResponse with path and distance, or null if no path exists
    */
   async findPath(
     venueId: string,
@@ -396,8 +419,8 @@ export class PathfindingService {
     endNodeId: string
   ): Promise<RouteResponse | null> {
     // Validate inputs
-    const startNode = dataStore.getNode(startNodeId);
-    const endNode = dataStore.getNode(endNodeId);
+    const startNode = await dataStore.getNode(startNodeId);
+    const endNode = await dataStore.getNode(endNodeId);
 
     if (!startNode || !endNode) {
       throw new Error('Start or end node not found');
@@ -416,10 +439,11 @@ export class PathfindingService {
     }
 
     // Build the graph
-    const graph = this.buildGraph(venueId);
+    const graph = await this.buildGraph(venueId);
 
     const allNodes = new Map<string, Node>();
-    dataStore.getNodesByVenue(venueId).forEach(node => {
+    const venueNodes = await dataStore.getNodesByVenue(venueId);
+    venueNodes.forEach(node => {
       allNodes.set(node.id, node);
     });
 
@@ -428,29 +452,30 @@ export class PathfindingService {
     const useBidirectional = allNodes.size > 100;
 
     let rawPath: Node[];
-    let totalDistance: number;
 
     if (useBidirectional) {
       const result = this.bidirectionalAStar(graph, startNodeId, endNodeId, allNodes);
       if (!result) return null;
       rawPath = result.path;
-      totalDistance = result.distance;
     } else {
       // Standard A* for smaller graphs
       const result = this.standardAStar(graph, startNodeId, endNodeId, allNodes);
       if (!result) return null;
       rawPath = result.path;
-      totalDistance = result.distance;
     }
 
     // Apply SOTA Path Smoothing
     const smoothedPath = this.smoothPath(rawPath);
-    const { directions, simpleDirections } = this.generateDirections(smoothedPath);
+
+    // Enforce strictly orthogonal segments (no diagonals)
+    const orthogonalPath = this.orthogonalizePath(smoothedPath);
+    const orthogonalDistance = this.calculatePathDistance(orthogonalPath);
+    const { directions, simpleDirections } = this.generateDirections(orthogonalPath, venueId, allNodes);
 
     return {
-      path: smoothedPath,
-      totalDistance,
-      estimatedTimeSeconds: this.estimateWalkingTime(totalDistance),
+      path: orthogonalPath,
+      totalDistance: orthogonalDistance,
+      estimatedTimeSeconds: this.estimateWalkingTime(orthogonalDistance),
       directions,
       simpleDirections,
     };
@@ -547,9 +572,10 @@ export class PathfindingService {
     });
 
     // Build modified graph excluding heavily-used nodes
-    const graph = this.buildGraph(venueId);
+    const graph = await this.buildGraph(venueId);
     const allNodes = new Map<string, Node>();
-    dataStore.getNodesByVenue(venueId).forEach(node => {
+    const venueNodes = await dataStore.getNodesByVenue(venueId);
+    venueNodes.forEach(node => {
       allNodes.set(node.id, node);
     });
 
@@ -566,19 +592,21 @@ export class PathfindingService {
 
       if (result) {
         const smoothedPath = this.smoothPath(result.path);
-        const { directions, simpleDirections } = this.generateDirections(smoothedPath);
+        const orthogonalPath = this.orthogonalizePath(smoothedPath);
+        const orthogonalDistance = this.calculatePathDistance(orthogonalPath);
+        const { directions, simpleDirections } = this.generateDirections(orthogonalPath, venueId, allNodes);
 
         // Only add if sufficiently different (>20% different path length or uses different corridors)
-        const isDifferent = result.distance > shortestPath.totalDistance * 1.05;
+        const isDifferent = orthogonalDistance > shortestPath.totalDistance * 1.05;
         const hasDifferentNodes = result.path.some(
           (n, idx) => idx > 0 && idx < result.path.length - 1 && !usedNodes.has(n.id)
         );
 
         if (isDifferent || hasDifferentNodes) {
           routes.push({
-            path: smoothedPath,
-            totalDistance: result.distance,
-            estimatedTimeSeconds: this.estimateWalkingTime(result.distance),
+            path: orthogonalPath,
+            totalDistance: orthogonalDistance,
+            estimatedTimeSeconds: this.estimateWalkingTime(orthogonalDistance),
             directions,
             simpleDirections,
           });
@@ -701,20 +729,20 @@ export class PathfindingService {
    * Find nearby landmarks (booth nodes) for a given position
    * Used to provide landmark-based navigation hints
    * SOTA: Increased search radius and better direction handling
+   * Now takes allNodes directly to avoid async in direction generation
    */
   private findNearbyLandmarks(
     x: number,
     y: number,
-    venueId: string,
+    allNodes: Map<string, Node>,
     maxDistance: number = 150 // Increased default radius for better coverage
   ): { name: string; distance: number; direction: string }[] {
-    const allNodes = dataStore.getNodesByVenue(venueId);
     const landmarks: { name: string; distance: number; direction: string }[] = [];
 
     // Track unique booth names to avoid duplicates (booths may have multiple entrance nodes)
     const seenNames = new Set<string>();
 
-    for (const node of allNodes) {
+    for (const [, node] of allNodes) {
       // Only consider booth nodes as landmarks
       if (node.type !== 'booth') continue;
 
@@ -753,7 +781,11 @@ export class PathfindingService {
    * SOTA: Includes landmark-based hints when available
    * Example: "Turn left at Booth 5, then right to destination"
    */
-  private generateDirections(path: Node[]): { directions: DirectionStep[]; simpleDirections: string } {
+  private generateDirections(
+    path: Node[],
+    _venueId: string,
+    allNodes: Map<string, Node>
+  ): { directions: DirectionStep[]; simpleDirections: string } {
     const directions: DirectionStep[] = [];
 
     if (path.length < 2) {
@@ -765,7 +797,6 @@ export class PathfindingService {
 
     const dest = path[path.length - 1];
     const destName = dest.name || 'destination';
-    const venueId = path[0].venueId || dest.venueId;
 
     // Collect significant turns along the path with distance and landmark info
     interface TurnInfo {
@@ -796,13 +827,10 @@ export class PathfindingService {
           }
 
           // SOTA: Find nearby landmarks at this turn point
-          // Increased search radius (150) for better landmark coverage
           let landmark: string | undefined;
-          if (venueId) {
-            const nearbyLandmarks = this.findNearbyLandmarks(current.x, current.y, venueId, 150);
-            if (nearbyLandmarks.length > 0) {
-              landmark = nearbyLandmarks[0].name;
-            }
+          const nearbyLandmarks = this.findNearbyLandmarks(current.x, current.y, allNodes, 150);
+          if (nearbyLandmarks.length > 0) {
+            landmark = nearbyLandmarks[0].name;
           }
 
           significantTurns.push({
@@ -923,13 +951,8 @@ export class PathfindingService {
   /**
    * Estimate walking time based on distance
    * Assumes average walking speed of 1.4 m/s (5 km/h)
-   *
-   * @param distance - Distance in pixels/units
-   * @returns Estimated time in seconds
    */
   private estimateWalkingTime(distance: number): number {
-    // Assuming 1 unit = 1 meter for this calculation
-    // Adjust the conversion factor based on your coordinate system
     const WALKING_SPEED = 1.4; // meters per second
     const CONVERSION_FACTOR = 1.0; // adjust based on your map scale
 
@@ -940,13 +963,9 @@ export class PathfindingService {
   /**
    * Find all reachable nodes from a starting node
    * Useful for debugging and validation
-   *
-   * @param venueId - The venue ID
-   * @param startNodeId - Starting node ID
-   * @returns Array of reachable node IDs
    */
   async findReachableNodes(venueId: string, startNodeId: string): Promise<string[]> {
-    const graph = this.buildGraph(venueId);
+    const graph = await this.buildGraph(venueId);
     const visited = new Set<string>();
     const queue: string[] = [startNodeId];
 
@@ -972,15 +991,12 @@ export class PathfindingService {
   /**
    * Validate graph connectivity
    * Ensures all nodes can reach all other nodes
-   *
-   * @param venueId - The venue ID
-   * @returns Validation result with disconnected components
    */
   async validateGraph(venueId: string): Promise<{
     isFullyConnected: boolean;
     components: string[][];
   }> {
-    const nodes = dataStore.getNodesByVenue(venueId);
+    const nodes = await dataStore.getNodesByVenue(venueId);
     const unvisited = new Set(nodes.map(n => n.id));
     const components: string[][] = [];
 
@@ -1000,11 +1016,6 @@ export class PathfindingService {
 
   /**
    * Test all booth pairs for pathfinding validation
-   * TRAINING MODE: Tests every possible booth-to-booth route
-   * Reports paths that might be cutting through rooms (suspiciously long)
-   *
-   * @param venueId - The venue ID
-   * @returns Test results with statistics and flagged paths
    */
   async testAllBoothPairs(venueId: string): Promise<{
     totalPairs: number;
@@ -1013,7 +1024,7 @@ export class PathfindingService {
     suspiciousPaths: { from: string; to: string; distance: number; pathLength: number; ratio: number }[];
     summary: string;
   }> {
-    const allNodes = dataStore.getNodesByVenue(venueId);
+    const allNodes = await dataStore.getNodesByVenue(venueId);
     const boothNodes = allNodes.filter(n => n.type === 'booth');
 
     // Group booth nodes by name to get unique booths
@@ -1052,7 +1063,6 @@ export class PathfindingService {
             const ratio = pathDistance / straightLine;
 
             // Flag paths that are >2x longer than straight line (potential room-crossing)
-            // A* should find near-optimal paths, so high ratios indicate detours or problems
             if (ratio > 2.0) {
               results.suspiciousPaths.push({
                 from: from.name,
@@ -1065,7 +1075,7 @@ export class PathfindingService {
           } else {
             results.failedPaths++;
           }
-        } catch (error) {
+        } catch {
           results.failedPaths++;
         }
       }
