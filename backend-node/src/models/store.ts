@@ -10,6 +10,7 @@ import { Venue, Node, Edge, QRMapping } from '../types';
 function toVenue(row: any): Venue {
   return {
     id: row.id,
+    orgId: row.org_id,
     name: row.name,
     mapImageUrl: row.map_image_url ?? undefined,
     width: row.width ?? undefined,
@@ -60,9 +61,9 @@ class DataStore {
 
   async createVenue(venue: Venue): Promise<Venue> {
     const { rows } = await pool.query(
-      `INSERT INTO venues (id, name, map_image_url, width, height, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [venue.id, venue.name, venue.mapImageUrl ?? null, venue.width ?? null, venue.height ?? null, venue.createdAt, venue.updatedAt]
+      `INSERT INTO venues (id, org_id, name, map_image_url, width, height, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [venue.id, venue.orgId, venue.name, venue.mapImageUrl ?? null, venue.width ?? null, venue.height ?? null, venue.createdAt, venue.updatedAt]
     );
     return toVenue(rows[0]);
   }
@@ -96,7 +97,6 @@ class DataStore {
   }
 
   // ─── Node Operations ───
-
   async createNode(node: Node): Promise<Node> {
     const { rows } = await pool.query(
       `INSERT INTO nodes (id, venue_id, name, type, x, y, created_at, updated_at)
@@ -104,6 +104,29 @@ class DataStore {
       [node.id, node.venueId, node.name, node.type, node.x, node.y, node.createdAt, node.updatedAt]
     );
     return toNode(rows[0]);
+  }
+
+  async createNodesBatch(nodes: Node[]): Promise<Node[]> {
+    if (nodes.length === 0) return [];
+
+    const values = nodes.map(n => `('${n.id}', '${n.venueId}', '${n.name.replace(/'/g, "''")}', '${n.type}', ${n.x}, ${n.y}, '${n.createdAt.toISOString()}', '${n.updatedAt.toISOString()}')`).join(', ');
+
+    // WARNING: For absolute SQL safety with user names, parameterization is much safer. Let's do a parameterized bulk insert.
+    let paramIndex = 1;
+    const valueParams: string[] = [];
+    const flatValues: any[] = [];
+
+    for (const node of nodes) {
+      valueParams.push(`($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`);
+      flatValues.push(node.id, node.venueId, node.name, node.type, node.x, node.y, node.createdAt, node.updatedAt);
+    }
+
+    const { rows } = await pool.query(
+      `INSERT INTO nodes (id, venue_id, name, type, x, y, created_at, updated_at)
+       VALUES ${valueParams.join(', ')} RETURNING *`,
+      flatValues
+    );
+    return rows.map(toNode);
   }
 
   async getNode(id: string): Promise<Node | undefined> {
@@ -135,7 +158,6 @@ class DataStore {
   }
 
   // ─── Edge Operations ───
-
   async createEdge(edge: Edge): Promise<Edge> {
     const { rows } = await pool.query(
       `INSERT INTO edges (id, venue_id, from_node_id, to_node_id, distance, created_at, updated_at)
@@ -143,6 +165,36 @@ class DataStore {
       [edge.id, edge.venueId, edge.fromNodeId, edge.toNodeId, edge.distance, edge.createdAt, edge.updatedAt]
     );
     return toEdge(rows[0]);
+  }
+
+  async createEdgesBatch(edges: Edge[]): Promise<Edge[]> {
+    if (edges.length === 0) return [];
+
+    // Large floor plans can generate tens of thousands of edges.
+    // Chunk inserts to avoid PostgreSQL parameter/protocol limits.
+    const CHUNK_SIZE = 1000;
+    const created: Edge[] = [];
+
+    for (let offset = 0; offset < edges.length; offset += CHUNK_SIZE) {
+      const chunk = edges.slice(offset, offset + CHUNK_SIZE);
+      let paramIndex = 1;
+      const valueParams: string[] = [];
+      const flatValues: any[] = [];
+
+      for (const edge of chunk) {
+        valueParams.push(`($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`);
+        flatValues.push(edge.id, edge.venueId, edge.fromNodeId, edge.toNodeId, edge.distance, edge.createdAt, edge.updatedAt);
+      }
+
+      const { rows } = await pool.query(
+        `INSERT INTO edges (id, venue_id, from_node_id, to_node_id, distance, created_at, updated_at)
+         VALUES ${valueParams.join(', ')} RETURNING *`,
+        flatValues
+      );
+      created.push(...rows.map(toEdge));
+    }
+
+    return created;
   }
 
   async getEdge(id: string): Promise<Edge | undefined> {

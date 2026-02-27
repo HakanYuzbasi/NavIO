@@ -9,9 +9,12 @@ import compression from 'compression';
 import path from 'path';
 import { corsMiddleware } from './middleware/cors';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
+import { requireAuth } from './middleware/auth';
+import { apiLimiter, authLimiter, scanLimiter } from './middleware/rateLimiter';
 import config from './config';
 
 // Import routes
+import authRoutes from './routes/auth';
 import venueRoutes from './routes/venues';
 import nodeRoutes from './routes/nodes';
 import edgeRoutes from './routes/edges';
@@ -41,6 +44,9 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Compression
 app.use(compression());
 
+// Global rate limiting
+app.use('/api/', apiLimiter);
+
 // Static file serving for uploads
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
@@ -49,14 +55,14 @@ app.use('/demo', express.static(path.join(process.cwd(), '../backend/public/demo
 
 // Request logging (development only)
 if (config.nodeEnv === 'development') {
-  app.use((req, res, next) => {
+  app.use((req, _res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
     next();
   });
 }
 
 // Health check
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -64,26 +70,36 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API Routes
-app.use('/api/venues', venueRoutes);
-app.use('/api/nodes', nodeRoutes);
-app.use('/api/edges', edgeRoutes);
+// --- Public routes (no auth) ---
+app.use('/api/auth', authLimiter, authRoutes);
+
+// Public: visitors can view routes, join queues, scan QR codes
 app.use('/api/route', routingRoutes);
-app.use('/api/qr', qrRoutes);
-app.use('/api/analyze', floorPlanAnalysisRoutes);
-app.use('/api/upload', uploadRoutes);
 app.use('/api/queue', queueRoutes);
-app.use('/api/analytics', analyticsRoutes);
-app.use('/api/v1/analytics', analyticsRoutes); // Alias for existing AnalyticsDashboard
+app.use('/api/nodes', nodeRoutes);           // GET for visitor booth lookup
+app.use('/api/qr', qrRoutes);
+
+// Public: scan webhook
+app.use('/api/analytics/scan', scanLimiter);
+
+// --- Protected routes (require auth) ---
+// Public: visitors can view venues, routes, join queues, scan QR codes
+app.use('/api/venues', venueRoutes);
+app.use('/api/edges', edgeRoutes);
+app.use('/api/analyze', requireAuth, floorPlanAnalysisRoutes);
+app.use('/api/upload', requireAuth, uploadRoutes);
+app.use('/api/analytics', requireAuth, analyticsRoutes);
+app.use('/api/v1/analytics', requireAuth, analyticsRoutes);
 
 // Root endpoint
-app.get('/', (req, res) => {
+app.get('/', (_req, res) => {
   res.json({
     name: 'NaviO API',
     version: '1.0.0',
     description: 'Indoor Navigation API with Automatic Floor Plan Analysis',
     endpoints: {
       health: '/health',
+      auth: '/api/auth',
       venues: '/api/venues',
       nodes: '/api/nodes',
       edges: '/api/edges',
@@ -91,6 +107,8 @@ app.get('/', (req, res) => {
       qr: '/api/qr',
       analyze: '/api/analyze',
       upload: '/api/upload',
+      queue: '/api/queue',
+      analytics: '/api/analytics',
     },
   });
 });

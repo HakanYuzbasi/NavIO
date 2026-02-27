@@ -55,13 +55,25 @@ const upload = multer({
  * POST /api/upload/floor-plan
  * Upload a floor plan image
  */
-router.post('/floor-plan', upload.single('image'), async (req: Request, res: Response) => {
+router.post('/floor-plan', (req, res, next) => {
+  console.log('--- Upload request headers ---', req.headers);
+  upload.single('image')(req, res, (err) => {
+    if (err) {
+      console.error('Multer error:', err);
+      res.status(500).json({ error: 'Multer error', details: err.message });
+      return;
+    }
+    next();
+  });
+}, async (req: Request, res: Response) => {
   try {
     if (!req.file) {
-      return res.status(400).json({
+      console.log('No req.file found! req.body:', req.body);
+      res.status(400).json({
         error: 'No image file provided',
         hint: 'Send a file with key "image" in multipart/form-data',
       });
+      return;
     }
 
     const filePath = req.file.path;
@@ -70,7 +82,7 @@ router.post('/floor-plan', upload.single('image'), async (req: Request, res: Res
 
     console.log(`Uploaded floor plan: ${originalName} -> ${fileName}`);
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       file: {
         path: filePath,
@@ -82,6 +94,8 @@ router.post('/floor-plan', upload.single('image'), async (req: Request, res: Res
       },
       message: 'Floor plan uploaded successfully',
     });
+
+    return;
   } catch (error: any) {
     console.error('Upload error:', error);
     res.status(500).json({
@@ -135,7 +149,8 @@ router.delete('/:filename', async (req: Request, res: Response) => {
     const filePath = path.join(uploadsDir, filename);
 
     if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'File not found' });
+      res.status(404).json({ error: 'File not found' });
+      return;
     }
 
     fs.unlinkSync(filePath);

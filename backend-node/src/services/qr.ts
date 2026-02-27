@@ -68,10 +68,10 @@ export class QRService {
   }
 
   /**
-   * Generate QR URL for a venue and node
+   * Generate QR URL for a booth/node (unified page with navigation + queue)
    */
-  generateQRUrl(venueId: string, nodeId: string, baseUrl: string): string {
-    return `${baseUrl}/venue/${venueId}?node=${nodeId}`;
+  generateQRUrl(_venueId: string, nodeId: string, baseUrl: string): string {
+    return `${baseUrl}/booth/${nodeId}`;
   }
 
   /**

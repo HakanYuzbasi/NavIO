@@ -19,9 +19,10 @@ router.post('/', async (req: Request, res: Response) => {
 
     // Validation
     if (!request.venueId || !request.startNodeId || !request.endNodeId) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'venueId, startNodeId, and endNodeId are required',
       });
+      return;
     }
 
     const route = await pathfindingService.findPath(
@@ -31,15 +32,17 @@ router.post('/', async (req: Request, res: Response) => {
     );
 
     if (!route) {
-      return res.status(404).json({
+      res.status(404).json({
         error: 'No path found between the specified nodes',
       });
+      return;
     }
 
     res.json(route);
   } catch (error: any) {
     if (error.message.includes('not found')) {
-      return res.status(404).json({ error: error.message });
+      res.status(404).json({ error: error.message });
+      return;
     }
     res.status(500).json({ error: 'Failed to calculate route' });
   }
@@ -55,9 +58,10 @@ router.post('/alternatives', async (req: Request, res: Response) => {
     const request: RouteRequest & { count?: number } = req.body;
 
     if (!request.venueId || !request.startNodeId || !request.endNodeId) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'venueId, startNodeId, and endNodeId are required',
       });
+      return;
     }
 
     const count = Math.min(Math.max(request.count || 3, 1), 5); // 1-5 alternatives
@@ -70,9 +74,10 @@ router.post('/alternatives', async (req: Request, res: Response) => {
     );
 
     if (routes.length === 0) {
-      return res.status(404).json({
+      res.status(404).json({
         error: 'No paths found between the specified nodes',
       });
+      return;
     }
 
     res.json({
@@ -85,7 +90,8 @@ router.post('/alternatives', async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     if (error.message.includes('not found')) {
-      return res.status(404).json({ error: error.message });
+      res.status(404).json({ error: error.message });
+      return;
     }
     res.status(500).json({ error: 'Failed to calculate alternative routes' });
   }

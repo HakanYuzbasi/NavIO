@@ -6,6 +6,7 @@ export const config = {
   port: parseInt(process.env.PORT || '8000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
   corsOrigin: process.env.CORS_ORIGIN || '*',
+  jwtSecret: process.env.JWT_SECRET || 'navio-dev-secret-change-in-production',
 
   // Walking speed for time estimation (meters per second)
   walkingSpeed: 1.4,

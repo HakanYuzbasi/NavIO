@@ -7,6 +7,7 @@ export type NodeType = 'entrance' | 'booth' | 'intersection' | 'waypoint';
 
 export interface Venue {
   id: string;
+  orgId: string;
   name: string;
   mapImageUrl?: string;
   width?: number;
@@ -63,6 +64,7 @@ export interface RouteResponse {
 }
 
 export interface CreateVenueDTO {
+  orgId: string;
   name: string;
   mapImageUrl?: string;
   width?: number;
@@ -121,4 +123,32 @@ export interface ScanEvent {
   visitorId?: string;
   boothId: string;
   scannedAt: Date;
+}
+
+export type UserRole = 'owner' | 'admin' | 'staff';
+
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface User {
+  id: string;
+  orgId: string;
+  email: string;
+  passwordHash: string;
+  name: string;
+  role: UserRole;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface JwtPayload {
+  userId: string;
+  orgId: string;
+  email: string;
+  role: UserRole;
 }

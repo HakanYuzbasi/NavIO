@@ -52,6 +52,19 @@
 
 
 @layer utilities {
+  @keyframes energy-flow {
+    from {
+      stroke-dashoffset: 0;
+    }
+    to {
+      stroke-dashoffset: -120;
+    }
+  }
+
+  .animate-energy-flow {
+    animation: energy-flow 1.8s linear infinite;
+  }
+
   .scrollbar-hide {
     -ms-overflow-style: none;
     /* IE and Edge */

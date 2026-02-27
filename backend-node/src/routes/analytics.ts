@@ -268,7 +268,8 @@ router.post('/scan', async (req: Request, res: Response) => {
     const { visitorId, boothId } = req.body;
 
     if (!boothId) {
-      return res.status(400).json({ error: 'boothId is required' });
+      res.status(400).json({ error: 'boothId is required' });
+      return;
     }
 
     const id = uuidv4();

@@ -63,10 +63,11 @@ const upload = multer({
 router.post('/image', upload.single('image'), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'No image file provided',
         hint: 'Send a file with key "image" in multipart/form-data',
       });
+      return;
     }
 
     const imagePath = req.file.path;
@@ -95,7 +96,7 @@ router.post('/image', upload.single('image'), async (req: Request, res: Response
       },
     }));
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       nodes,
       edges: [], // Will be calculated based on walkable areas
@@ -122,6 +123,8 @@ router.post('/image', upload.single('image'), async (req: Request, res: Response
         url: `/uploads/${req.file.filename}`,
       },
     });
+
+    return;
   } catch (error: any) {
     console.error('Analysis error:', error);
     res.status(500).json({
@@ -140,23 +143,25 @@ router.post('/from-path', async (req: Request, res: Response) => {
     const { imagePath } = req.body;
 
     if (!imagePath) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'imagePath is required',
       });
+      return;
     }
 
     if (!fs.existsSync(imagePath)) {
-      return res.status(404).json({
+      res.status(404).json({
         error: 'Image file not found',
         path: imagePath,
       });
+      return;
     }
 
     console.log(`Analyzing image from path: ${imagePath}`);
 
     const result = await analyzeFloorPlan(imagePath);
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       booths: result.booths,
       boothCount: result.booths.length,
@@ -165,6 +170,8 @@ router.post('/from-path', async (req: Request, res: Response) => {
       walkablePercentage: result.walkableArea?.percentage || 0,
       analysisTimeMs: result.analysisTimeMs,
     });
+
+    return;
   } catch (error: any) {
     console.error('Analysis error:', error);
     res.status(500).json({
@@ -187,19 +194,21 @@ router.post('/detect-booths', upload.single('image'), async (req: Request, res: 
     } else if (req.body.imagePath) {
       imagePath = req.body.imagePath;
       if (!fs.existsSync(imagePath)) {
-        return res.status(404).json({ error: 'Image file not found' });
+        res.status(404).json({ error: 'Image file not found' });
+        return;
       }
     } else {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'Provide either an image file or imagePath in body',
       });
+      return;
     }
 
     console.log(`Detecting booths in: ${imagePath}`);
 
     const booths = await detectBooths(imagePath);
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       booths,
       count: booths.length,
@@ -209,6 +218,8 @@ router.post('/detect-booths', upload.single('image'), async (req: Request, res: 
         large: booths.filter((b) => b.category === 'large').length,
       },
     });
+
+    return;
   } catch (error: any) {
     console.error('Booth detection error:', error);
     res.status(500).json({
@@ -231,12 +242,14 @@ router.post('/annotate', upload.single('image'), async (req: Request, res: Respo
     } else if (req.body.imagePath) {
       imagePath = req.body.imagePath;
       if (!fs.existsSync(imagePath)) {
-        return res.status(404).json({ error: 'Image file not found' });
+        res.status(404).json({ error: 'Image file not found' });
+        return;
       }
     } else {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'Provide either an image file or imagePath in body',
       });
+      return;
     }
 
     const dotRadius = parseInt(req.body.dotRadius) || 3;
@@ -249,7 +262,7 @@ router.post('/annotate', upload.single('image'), async (req: Request, res: Respo
 
     const boothCount = await createAnnotatedImage(imagePath, outputPath, dotRadius);
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       boothCount,
       annotatedImage: {
@@ -257,6 +270,8 @@ router.post('/annotate', upload.single('image'), async (req: Request, res: Respo
         url: `/uploads/${path.basename(outputPath)}`,
       },
     });
+
+    return;
   } catch (error: any) {
     console.error('Annotation error:', error);
     res.status(500).json({
@@ -276,9 +291,10 @@ router.post('/floor-plan-data', async (req: Request, res: Response) => {
     const { pixels, width, height } = req.body;
 
     if (!pixels || !width || !height) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'pixels (array), width, and height are required',
       });
+      return;
     }
 
     console.log(`Analyzing floor plan data: ${width}x${height}`);
@@ -395,7 +411,7 @@ router.post('/floor-plan-data', async (req: Request, res: Response) => {
 
     console.log(`Detected ${nodes.length} booths from pixel data`);
 
-    return res.status(200).json({
+    res.status(200).json({
       nodes,
       edges: [],
       metadata: {
@@ -412,6 +428,8 @@ router.post('/floor-plan-data', async (req: Request, res: Response) => {
       },
       qualityScore: nodes.length > 0 ? 85 : 0,
     });
+
+    return;
   } catch (error: any) {
     console.error('Floor plan analysis error:', error);
     res.status(500).json({
@@ -430,19 +448,22 @@ router.post('/validate-detection', async (req: Request, res: Response) => {
     const { type, detection, action, modifications } = req.body;
 
     if (!type || !detection || !action) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'type, detection, and action are required',
       });
+      return;
     }
 
     if (!['node', 'edge'].includes(type)) {
-      return res.status(400).json({ error: 'type must be "node" or "edge"' });
+      res.status(400).json({ error: 'type must be "node" or "edge"' });
+      return;
     }
 
     if (!['approve', 'reject', 'modify'].includes(action)) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'action must be "approve", "reject", or "modify"',
       });
+      return;
     }
 
     const result = {
@@ -455,7 +476,9 @@ router.post('/validate-detection', async (req: Request, res: Response) => {
 
     console.log(`Detection ${action}ed: ${type} - ${detection.name || 'unnamed'}`);
 
-    return res.status(200).json(result);
+    res.status(200).json(result);
+
+    return;
   } catch (error: any) {
     console.error('Validation error:', error);
     res.status(500).json({
@@ -480,12 +503,14 @@ router.post('/navigation-graph', upload.single('image'), async (req: Request, re
     } else if (req.body.imagePath) {
       imagePath = req.body.imagePath;
       if (!fs.existsSync(imagePath)) {
-        return res.status(404).json({ error: 'Image file not found' });
+        res.status(404).json({ error: 'Image file not found' });
+        return;
       }
     } else {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'Provide either an image file or imagePath in body',
       });
+      return;
     }
 
     // OPTIMIZED: Default to 15px grid spacing for better corridor detection
@@ -529,7 +554,7 @@ router.post('/navigation-graph', upload.single('image'), async (req: Request, re
       },
     }));
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       nodes,
       edges,
@@ -546,6 +571,8 @@ router.post('/navigation-graph', upload.single('image'), async (req: Request, re
         url: `/uploads/${req.file.filename}`,
       } : undefined,
     });
+
+    return;
   } catch (error: any) {
     console.error('Navigation graph generation error:', error);
     res.status(500).json({
@@ -564,7 +591,8 @@ router.post('/batch-validate', async (req: Request, res: Response) => {
     const { nodes, edges, action, minConfidence } = req.body;
 
     if (!action) {
-      return res.status(400).json({ error: 'action is required' });
+      res.status(400).json({ error: 'action is required' });
+      return;
     }
 
     const threshold = minConfidence || 0.8;
@@ -574,13 +602,15 @@ router.post('/batch-validate', async (req: Request, res: Response) => {
 
     console.log(`Batch validation: ${approvedNodes.length} nodes, ${approvedEdges.length} edges approved`);
 
-    return res.status(200).json({
+    res.status(200).json({
       approvedNodes,
       approvedEdges,
       rejectedNodes: (nodes?.length || 0) - approvedNodes.length,
       rejectedEdges: (edges?.length || 0) - approvedEdges.length,
       threshold,
     });
+
+    return;
   } catch (error: any) {
     console.error('Batch validation error:', error);
     res.status(500).json({

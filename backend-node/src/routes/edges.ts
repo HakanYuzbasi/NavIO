@@ -5,6 +5,7 @@
 
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import { AuthRequest, requireAuth } from '../middleware/auth';
 import { dataStore } from '../models/store';
 import { Edge, CreateEdgeDTO } from '../types';
 
@@ -20,7 +21,8 @@ router.get('/', async (req: Request, res: Response) => {
 
     if (venueId && typeof venueId === 'string') {
       const edges = await dataStore.getEdgesByVenue(venueId);
-      return res.json(edges);
+      res.json(edges);
+      return;
     }
 
     // Return all edges
@@ -44,7 +46,8 @@ router.get('/:id', async (req: Request, res: Response) => {
   try {
     const edge = await dataStore.getEdge(req.params.id);
     if (!edge) {
-      return res.status(404).json({ error: 'Edge not found' });
+      res.status(404).json({ error: 'Edge not found' });
+      return;
     }
     res.json(edge);
   } catch (error) {
@@ -56,33 +59,37 @@ router.get('/:id', async (req: Request, res: Response) => {
  * POST /api/edges
  * Create a new edge
  */
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const dto: CreateEdgeDTO = req.body;
 
     // Validation
     if (!dto.venueId || !dto.fromNodeId || !dto.toNodeId || dto.distance === undefined) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'venueId, fromNodeId, toNodeId, and distance are required',
       });
+      return;
     }
 
     if (dto.distance <= 0) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'distance must be greater than 0',
       });
+      return;
     }
 
     if (dto.fromNodeId === dto.toNodeId) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'fromNodeId and toNodeId cannot be the same',
       });
+      return;
     }
 
     // Verify venue exists
     const venue = await dataStore.getVenue(dto.venueId);
     if (!venue) {
-      return res.status(404).json({ error: 'Venue not found' });
+      res.status(404).json({ error: 'Venue not found' });
+      return;
     }
 
     // Verify both nodes exist and belong to the venue
@@ -90,13 +97,15 @@ router.post('/', async (req: Request, res: Response) => {
     const toNode = await dataStore.getNode(dto.toNodeId);
 
     if (!fromNode || !toNode) {
-      return res.status(404).json({ error: 'One or both nodes not found' });
+      res.status(404).json({ error: 'One or both nodes not found' });
+      return;
     }
 
     if (fromNode.venueId !== dto.venueId || toNode.venueId !== dto.venueId) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'Both nodes must belong to the specified venue',
       });
+      return;
     }
 
     const edge: Edge = {
@@ -117,14 +126,62 @@ router.post('/', async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/edges/batch
+ * Create multiple edges at once
+ */
+router.post('/batch', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const dtos: CreateEdgeDTO[] = req.body.edges;
+
+    if (!Array.isArray(dtos) || dtos.length === 0) {
+      res.status(400).json({ error: 'edges array is required and must not be empty' });
+      return;
+    }
+
+    const { venueId } = dtos[0];
+
+    // Verify venue exists
+    const venue = await dataStore.getVenue(venueId);
+    if (!venue) {
+      res.status(404).json({ error: 'Venue not found' });
+      return;
+    }
+
+    // Creating edges directly for performance without node validation (assume caller validated)
+    const edges: Edge[] = dtos.map(dto => {
+      // Basic validation
+      if (!dto.venueId || !dto.fromNodeId || !dto.toNodeId || dto.distance === undefined) {
+        throw new Error('Invalid edge data provided in batch');
+      }
+      return {
+        id: uuidv4(),
+        venueId: dto.venueId,
+        fromNodeId: dto.fromNodeId,
+        toNodeId: dto.toNodeId,
+        distance: dto.distance,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+    });
+
+    const created = await dataStore.createEdgesBatch(edges);
+    res.status(201).json({ success: true, count: created.length, edges: created });
+  } catch (error: any) {
+    console.error('Batch create edges error:', error);
+    res.status(500).json({ error: error.message || 'Failed to create edges' });
+  }
+});
+
+/**
  * DELETE /api/edges/:id
  * Delete an edge
  */
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const deleted = await dataStore.deleteEdge(req.params.id);
     if (!deleted) {
-      return res.status(404).json({ error: 'Edge not found' });
+      res.status(404).json({ error: 'Edge not found' });
+      return;
     }
     res.status(204).send();
   } catch (error) {
@@ -137,7 +194,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
  * Automatically generate edges between nearby nodes
  * Uses proximity-based connection with configurable max distance
  */
-router.post('/auto-generate/:venueId', async (req: Request, res: Response) => {
+router.post('/auto-generate/:venueId', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { venueId } = req.params;
     const {
@@ -151,13 +208,15 @@ router.post('/auto-generate/:venueId', async (req: Request, res: Response) => {
     // Verify venue exists
     const venue = await dataStore.getVenue(venueId);
     if (!venue) {
-      return res.status(404).json({ error: 'Venue not found' });
+      res.status(404).json({ error: 'Venue not found' });
+      return;
     }
 
     // Get all nodes for this venue
     const nodes = await dataStore.getNodesByVenue(venueId);
     if (nodes.length < 2) {
-      return res.status(400).json({ error: 'Need at least 2 nodes to generate edges' });
+      res.status(400).json({ error: 'Need at least 2 nodes to generate edges' });
+      return;
     }
 
     // Calculate Euclidean distance between two nodes

@@ -26,6 +26,7 @@ interface InteractiveMapProps {
   destination?: Node;
   onNodeClick?: (node: Node) => void;
   turnPoints?: TurnPoint[]; // Key navigation points to highlight
+  uiTopOffset?: number;
 }
 
 export const InteractiveMap: React.FC<InteractiveMapProps> = ({
@@ -37,12 +38,14 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   destination,
   onNodeClick,
   turnPoints,
+  uiTopOffset,
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, width: 1000, height: 800 });
   const [isPanning, setIsPanning] = useState(false);
   const [startPan, setStartPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
+  const topOffsetPx = uiTopOffset ?? 16;
 
   useEffect(() => {
     if (venue.width && venue.height) {
@@ -62,7 +65,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
 
       const width = (maxX - minX) || 100;
       const height = (maxY - minY) || 100;
-      const padding = 150; // Spacious margin for 3D tilt
+      const padding = 150;
 
       setViewBox({
         x: minX - padding / 2,
@@ -158,90 +161,54 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     const s = viewBox.width / (venue.width || 1000);
 
     return (
-      <g className="energy-path">
-        {/* SOTA Liquid Core */}
+      <g className="route-path">
+        {/* Route casing */}
         <path
           d={pathData}
-          stroke="rgba(79, 70, 229, 0.8)"
-          strokeWidth={6 * s}
+          stroke="rgba(255, 255, 255, 0.95)"
+          strokeWidth={16 * s}
           fill="none"
           strokeLinecap="round"
           strokeLinejoin="round"
-          style={{ filter: 'drop-shadow(0 0 8px rgba(99, 102, 241, 0.6))' }}
         />
-        {/* Pulsing Energy Flow */}
+        {/* Main route line */}
         <path
           d={pathData}
-          stroke="url(#energyGradient)"
-          strokeWidth={4 * s}
+          stroke="#2563eb"
+          strokeWidth={10 * s}
           fill="none"
-          strokeDasharray={`${4 * s},${16 * s}`}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        {/* Subtle motion layer */}
+        <path
+          d={pathData}
+          stroke="url(#routeFlowGradient)"
+          strokeWidth={6 * s}
+          fill="none"
+          strokeDasharray={`${7 * s},${12 * s}`}
           strokeLinecap="round"
           className="animate-energy-flow"
+          opacity={0.95}
         />
 
-        {/* Turn Markers — zoom-scaled for consistent apparent size */}
         {turnPoints && turnPoints.map((tp, index) => {
-          const isEndpoint = tp.type === 'start' || tp.type === 'destination';
+          if (tp.type === 'start' || tp.type === 'destination') return null;
           return (
             <g key={`turn-${index}`} transform={`translate(${tp.node.x}, ${tp.node.y})`}>
               <g transform={`scale(${s})`}>
-                {/* Soft Outer Glow */}
-                <circle
-                  cx={0}
-                  cy={0}
-                  r={isEndpoint ? 16 : 12}
-                  fill={tp.type === 'start' ? 'rgba(16, 185, 129, 0.2)' : tp.type === 'destination' ? 'rgba(99, 102, 241, 0.2)' : 'rgba(245, 158, 11, 0.2)'}
-                />
-                {/* Main Ring */}
-                <circle
-                  cx={0}
-                  cy={0}
-                  r={isEndpoint ? 12 : 10}
-                  fill={
-                    tp.type === 'start' ? '#10b981' :
-                      tp.type === 'destination' ? '#6366f1' :
-                        '#f59e0b'
-                  }
-                  stroke="white"
-                  strokeWidth="2.5"
-                />
+                <circle cx={0} cy={0} r={9} fill="#f59e0b" stroke="white" strokeWidth={2.5} />
                 <text
                   x={0}
-                  y={4}
+                  y={3}
                   textAnchor="middle"
-                  fontSize="12"
+                  fontSize="10"
                   fill="white"
                   fontWeight="900"
                   style={{ pointerEvents: 'none', userSelect: 'none' }}
                 >
-                  {tp.type === 'start' ? '↑' :
-                    tp.type === 'destination' ? '★' :
-                      tp.type === 'turn-left' ? '←' : '→'}
+                  {tp.type === 'turn-left' ? 'L' : 'R'}
                 </text>
-
-                {/* Instruction Label — only for start/destination endpoints */}
-                {isEndpoint && (
-                  <g transform="translate(0, -25)">
-                    <rect
-                      x="-40"
-                      y="-10"
-                      width="80"
-                      height="18"
-                      rx="9"
-                      fill="rgba(31, 41, 55, 0.9)"
-                    />
-                    <text
-                      textAnchor="middle"
-                      fontSize="8"
-                      fill="white"
-                      fontWeight="bold"
-                      y="2"
-                    >
-                      {tp.type === 'start' ? 'DEPART' : 'ARRIVE'}
-                    </text>
-                  </g>
-                )}
               </g>
             </g>
           );
@@ -250,35 +217,79 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     );
   };
 
-  const renderNodes = () => {
-    // Only show booth and entrance nodes - hide waypoints for clean navigation UI
-    // Like airport wayfinding, users only need to see destinations, not the routing network
-    // CRITICAL: Deduplicate by name - each booth may have multiple entrance nodes
-    // but we only want to show ONE marker per booth
-    const boothNodes = nodes.filter(node =>
-      node.type === 'booth' || node.type === 'entrance' ||
-      currentLocation?.id === node.id || destination?.id === node.id
+  const renderFocusMarkers = () => {
+    const s = viewBox.width / (venue.width || 1000);
+
+    return (
+      <>
+        {currentLocation && (
+          <g transform={`translate(${currentLocation.x}, ${currentLocation.y})`}>
+            <g transform={`scale(${s})`}>
+              <circle cx={0} cy={0} r={16} fill="rgba(16,185,129,0.18)" />
+              <circle cx={0} cy={0} r={9} fill="#10b981" stroke="white" strokeWidth={3} />
+              <circle cx={0} cy={0} r={3.5} fill="white" />
+              <g transform="translate(0, -23)">
+                <rect x={-24} y={-9} width={48} height={16} rx={8} fill="rgba(15,23,42,0.9)" />
+                <text x={0} y={2} textAnchor="middle" fontSize="8" fill="white" fontWeight="700">
+                  START
+                </text>
+              </g>
+            </g>
+          </g>
+        )}
+
+        {destination && (
+          <g transform={`translate(${destination.x}, ${destination.y})`}>
+            <g transform={`scale(${s})`}>
+              <circle cx={0} cy={0} r={16} fill="rgba(37,99,235,0.2)" />
+              <circle cx={0} cy={0} r={9} fill="#2563eb" stroke="white" strokeWidth={3} />
+              <path d="M-3 -2 L3 -2 L1 4 L-1 4 Z" fill="white" />
+              <g transform="translate(0, -23)">
+                <rect x={-20} y={-9} width={40} height={16} rx={8} fill="rgba(15,23,42,0.9)" />
+                <text x={0} y={2} textAnchor="middle" fontSize="8" fill="white" fontWeight="700">
+                  END
+                </text>
+              </g>
+            </g>
+          </g>
+        )}
+      </>
     );
+  };
 
-    // Deduplicate by name - keep only one node per unique name
-    const seenNames = new Set<string>();
+  const renderNodes = () => {
+    const hasDestinationNodes = nodes.some(node => node.type === 'booth' || node.type === 'entrance');
+    const candidateNodes = hasDestinationNodes
+      ? nodes.filter(node =>
+        node.type === 'booth' || node.type === 'entrance' ||
+        currentLocation?.id === node.id || destination?.id === node.id
+      )
+      : nodes;
+
+    // When destination-style nodes exist, keep one marker per visible label.
+    // If not, fall back to all nodes so the map never appears empty.
     const visibleNodes: Node[] = [];
-
-    for (const node of boothNodes) {
-      // Always include current location and destination (even if duplicate name)
-      if (currentLocation?.id === node.id || destination?.id === node.id) {
-        visibleNodes.push(node);
-        seenNames.add(node.name);
-      } else if (!seenNames.has(node.name)) {
-        seenNames.add(node.name);
-        visibleNodes.push(node);
+    if (hasDestinationNodes) {
+      const seenNames = new Set<string>();
+      for (const node of candidateNodes) {
+        if (currentLocation?.id === node.id || destination?.id === node.id) {
+          visibleNodes.push(node);
+          seenNames.add(node.name);
+        } else if (!seenNames.has(node.name)) {
+          seenNames.add(node.name);
+          visibleNodes.push(node);
+        }
       }
+    } else {
+      visibleNodes.push(...candidateNodes);
     }
 
     // Scale factor for consistent node marker size across zoom levels
     const s = viewBox.width / (venue.width || 1000);
 
     return visibleNodes.map(node => {
+      if (currentLocation?.id === node.id || destination?.id === node.id) return null;
+
       // Only hide nodes that have an explicit turn point marker rendered on the map
       if (turnPoints) {
         const hasTurnPointMarker = turnPoints.some(tp => tp.node.id === node.id);
@@ -291,6 +302,9 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       if (node.type === 'entrance') {
         fill = '#f59e0b'; // Amber for entrances
         radius = 6;
+      } else if (node.type === 'intersection') {
+        fill = '#60a5fa'; // Blue for generic waypoints/intersections
+        radius = 3;
       } else if (node.type === 'booth') {
         fill = '#9ca3af'; // Light gray for booths (subtle, not distracting)
         radius = 3;
@@ -318,12 +332,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   };
 
   return (
-    <div
-      className="relative w-full h-full overflow-hidden bg-slate-50 dark:bg-slate-900 rounded-3xl shadow-inner border-4 border-white/50 dark:border-slate-800"
-      style={{
-        perspective: '1200px',
-      }}
-    >
+    <div className="relative w-full h-full overflow-hidden bg-slate-100 dark:bg-slate-900 rounded-2xl border border-slate-200/70 dark:border-slate-700/70 shadow-[inset_0_1px_0_rgba(255,255,255,0.25)]">
       <svg
         ref={svgRef}
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
@@ -333,31 +342,16 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         onMouseLeave={handleMouseUp}
         onWheel={handleWheel}
         className={cn(
-          "w-full h-full touch-none transition-transform duration-1000 ease-out",
+          "w-full h-full touch-none transition-opacity duration-300",
           isPanning ? "cursor-grabbing" : "cursor-grab"
         )}
-        style={{
-          transform: route ? 'rotateX(25deg) scale(1.1) translateY(-20px)' : 'rotateX(0deg) scale(1)',
-          transformOrigin: 'center bottom',
-          filter: 'drop-shadow(0 20px 30px rgba(0,0,0,0.1))',
-        }}
       >
         <defs>
-          <linearGradient id="energyGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#818cf8" />
-            <stop offset="50%" stopColor="#6366f1" />
-            <stop offset="100%" stopColor="#4f46e5" />
+          <linearGradient id="routeFlowGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#bfdbfe" />
+            <stop offset="50%" stopColor="#60a5fa" />
+            <stop offset="100%" stopColor="#2563eb" />
           </linearGradient>
-          <filter id="markerGlow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="blur" />
-            <feOffset in="blur" dx="0" dy="0" result="offsetBlur" />
-            <feFlood floodColor="#6366f1" floodOpacity="0.5" result="glowColor" />
-            <feComposite in="glowColor" in2="offsetBlur" operator="in" result="glow" />
-            <feMerge>
-              <feMergeNode in="glow" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
         </defs>
 
         {/* Background */}
@@ -413,35 +407,51 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         <g className="route">{renderRoute()}</g>
 
         <g className="nodes">{renderNodes()}</g>
+        <g className="focus-markers">{renderFocusMarkers()}</g>
       </svg>
 
-      {/* SOTA Bottom Ambient Overlay (Glass) */}
-      {route && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-indigo-600/90 backdrop-blur-md rounded-full shadow-2xl border border-white/20 text-white text-[10px] font-black uppercase tracking-[0.2em] animate-pulse">
-          Digital Twin Active
+      {!venue.mapImageUrl && nodes.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="px-5 py-3 rounded-2xl bg-white/80 dark:bg-slate-900/80 border border-slate-200/70 dark:border-slate-700/70 text-sm font-semibold text-slate-500 dark:text-slate-300 shadow-lg">
+            No map image or nodes available yet.
+          </div>
         </div>
       )}
 
+      {/* Live Navigation Status */}
+      {route && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-slate-900/85 backdrop-blur-md rounded-full border border-slate-700/80 text-white text-[10px] font-bold uppercase tracking-wider">
+          Route Active
+        </div>
+      )}
+
+      <div
+        className="absolute left-4 px-3 py-1.5 rounded-full bg-white/90 dark:bg-slate-800/90 border border-slate-200/70 dark:border-slate-700/70 text-[11px] font-semibold text-slate-600 dark:text-slate-300 shadow-sm pointer-events-none"
+        style={{ top: `${topOffsetPx}px` }}
+      >
+        Drag to pan, scroll to zoom
+      </div>
+
       {/* Map Controls */}
-      <div className="absolute top-4 right-4 flex flex-col gap-2">
+      <div className="absolute right-4 flex flex-col gap-2" style={{ top: `${topOffsetPx}px` }}>
         <button
           onClick={handleZoomIn}
           title="Zoom In"
-          className="w-10 h-10 flex items-center justify-center bg-white dark:bg-slate-800 rounded-lg shadow-md hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-100 dark:border-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
+          className="w-10 h-10 flex items-center justify-center bg-white/95 dark:bg-slate-800/95 rounded-full shadow-lg hover:bg-white dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
         >
           <ZoomIn size={20} />
         </button>
         <button
           onClick={handleZoomOut}
           title="Zoom Out"
-          className="w-10 h-10 flex items-center justify-center bg-white dark:bg-slate-800 rounded-lg shadow-md hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-100 dark:border-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
+          className="w-10 h-10 flex items-center justify-center bg-white/95 dark:bg-slate-800/95 rounded-full shadow-lg hover:bg-white dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
         >
           <ZoomOut size={20} />
         </button>
         <button
           onClick={handleResetView}
           title="Reset View"
-          className="w-10 h-10 flex items-center justify-center bg-white dark:bg-slate-800 rounded-lg shadow-md hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-100 dark:border-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
+          className="w-10 h-10 flex items-center justify-center bg-white/95 dark:bg-slate-800/95 rounded-full shadow-lg hover:bg-white dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
         >
           <Maximize size={20} />
         </button>

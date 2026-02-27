@@ -138,10 +138,10 @@ export default function QueueJoinPage() {
             <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-6 text-center animate-pulse">
               <div className="flex items-center justify-center gap-2 text-amber-700 font-bold text-lg">
                 <Bell size={20} />
-                You&apos;re Almost Up!
+                You&apos;re next!
               </div>
               <p className="text-amber-600 mt-1 text-sm">
-                Please head to the booth and get ready.
+                Please make your way to booth {boothId}
               </p>
             </div>
           )}

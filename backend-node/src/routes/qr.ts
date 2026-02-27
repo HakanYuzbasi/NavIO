@@ -18,19 +18,22 @@ router.post('/', async (req: Request, res: Response) => {
     const dto: CreateQRMappingDTO = req.body;
 
     if (!dto.qrId || !dto.nodeId) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'qrId and nodeId are required',
       });
+      return;
     }
 
     const mapping = await qrService.createQRMapping(dto);
     res.status(201).json(mapping);
   } catch (error: any) {
     if (error.message === 'Node not found') {
-      return res.status(404).json({ error: error.message });
+      res.status(404).json({ error: error.message });
+      return;
     }
     if (error.message === 'QR ID already exists') {
-      return res.status(409).json({ error: error.message });
+      res.status(409).json({ error: error.message });
+      return;
     }
     res.status(500).json({ error: 'Failed to create QR mapping' });
   }
@@ -47,7 +50,8 @@ router.post('/generate/:nodeId', async (req: Request, res: Response) => {
     res.status(201).json(mapping);
   } catch (error: any) {
     if (error.message === 'Node not found') {
-      return res.status(404).json({ error: error.message });
+      res.status(404).json({ error: error.message });
+      return;
     }
     res.status(500).json({ error: 'Failed to generate QR code' });
   }
@@ -80,7 +84,8 @@ router.get('/:qrId', async (req: Request, res: Response) => {
     const mapping = await qrService.getQRMapping(qrId);
 
     if (!mapping) {
-      return res.status(404).json({ error: 'QR mapping not found' });
+      res.status(404).json({ error: 'QR mapping not found' });
+      return;
     }
 
     res.json(mapping);
@@ -113,7 +118,8 @@ router.delete('/:qrId', async (req: Request, res: Response) => {
     const deleted = await qrService.deleteQRMapping(qrId);
 
     if (!deleted) {
-      return res.status(404).json({ error: 'QR mapping not found' });
+      res.status(404).json({ error: 'QR mapping not found' });
+      return;
     }
 
     res.status(204).send();

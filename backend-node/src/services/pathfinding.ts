@@ -9,13 +9,27 @@
  * - Adaptive path smoothing
  */
 
-import { Node, Graph, RouteResponse, DirectionStep } from '../types';
+import fs from 'fs';
+import path from 'path';
+import { Node, Graph, RouteResponse, DirectionStep, Edge, Venue } from '../types';
 import { dataStore } from '../models/store';
+import { detectBooths, detectWalkableAreas } from './accurateDetector';
 
 interface PriorityQueueItem {
   nodeId: string;
   priority: number;
   gScore: number; // Track g-score for bidirectional meet point
+}
+
+interface WalkableValidationContext {
+  mask: Uint8Array;
+  width: number;
+  height: number;
+}
+
+interface EdgeValidationCacheEntry {
+  key: string;
+  allowedEdgeIds: Set<string>;
 }
 
 /**
@@ -81,6 +95,8 @@ class BinaryHeapPriorityQueue {
 
 
 export class PathfindingService {
+  private edgeValidationCache = new Map<string, EdgeValidationCacheEntry>();
+
   /**
    * Calculate Euclidean distance between two nodes (heuristic for A*)
    */
@@ -94,8 +110,14 @@ export class PathfindingService {
    * Build a graph structure from venue nodes and edges
    */
   private async buildGraph(venueId: string): Promise<Graph> {
+    const venue = await dataStore.getVenue(venueId);
+    if (!venue) {
+      throw new Error(`Venue not found: ${venueId}`);
+    }
+
     const nodes = await dataStore.getNodesByVenue(venueId);
     const edges = await dataStore.getEdgesByVenue(venueId);
+    const validatedEdges = await this.filterEdgesByCorridor(venue, nodes, edges);
 
     const graph: Graph = {
       nodes: new Map(),
@@ -114,7 +136,7 @@ export class PathfindingService {
     });
 
     // Build adjacency list
-    edges.forEach(edge => {
+    validatedEdges.forEach(edge => {
       const fromNode = graph.nodes.get(edge.fromNodeId);
       const toNode = graph.nodes.get(edge.toNodeId);
 
@@ -142,6 +164,197 @@ export class PathfindingService {
     });
 
     return graph;
+  }
+
+  private resolveVenueImagePath(mapImageUrl: string): string | null {
+    if (!mapImageUrl || mapImageUrl.startsWith('http://') || mapImageUrl.startsWith('https://')) {
+      return null;
+    }
+
+    const candidates: string[] = [];
+
+    if (path.isAbsolute(mapImageUrl)) {
+      candidates.push(mapImageUrl);
+    }
+
+    if (mapImageUrl.startsWith('/uploads/')) {
+      candidates.push(path.join(process.cwd(), mapImageUrl.replace(/^\/+/, '')));
+    }
+
+    if (mapImageUrl.startsWith('/demo/')) {
+      candidates.push(path.join(process.cwd(), '../backend/public', mapImageUrl.replace(/^\/+/, '')));
+    }
+
+    if (mapImageUrl.startsWith('/')) {
+      candidates.push(path.join(process.cwd(), mapImageUrl.replace(/^\/+/, '')));
+    } else {
+      candidates.push(path.join(process.cwd(), mapImageUrl));
+    }
+
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) return candidate;
+    }
+
+    return null;
+  }
+
+  private async buildWalkableValidationContext(imagePath: string): Promise<WalkableValidationContext> {
+    const walkable = await detectWalkableAreas(imagePath);
+    const booths = await detectBooths(imagePath);
+    const mask = new Uint8Array(walkable.mask);
+
+    // Mask booth rectangles so edges that cut through booths are always rejected.
+    for (const booth of booths) {
+      const minX = Math.max(0, Math.floor(booth.centerX - booth.width / 2));
+      const maxX = Math.min(walkable.width - 1, Math.ceil(booth.centerX + booth.width / 2));
+      const minY = Math.max(0, Math.floor(booth.centerY - booth.height / 2));
+      const maxY = Math.min(walkable.height - 1, Math.ceil(booth.centerY + booth.height / 2));
+
+      for (let y = minY; y <= maxY; y++) {
+        const rowOffset = y * walkable.width;
+        for (let x = minX; x <= maxX; x++) {
+          mask[rowOffset + x] = 0;
+        }
+      }
+    }
+
+    return { mask, width: walkable.width, height: walkable.height };
+  }
+
+  private hasCorridorLineOfSight(
+    from: Node,
+    to: Node,
+    context: WalkableValidationContext,
+    scaleX: number,
+    scaleY: number
+  ): boolean {
+    const startX = Math.round(from.x * scaleX);
+    const startY = Math.round(from.y * scaleY);
+    const endX = Math.round(to.x * scaleX);
+    const endY = Math.round(to.y * scaleY);
+
+    const isInBounds = (x: number, y: number): boolean =>
+      x >= 0 && x < context.width && y >= 0 && y < context.height;
+
+    const isWalkable = (x: number, y: number): boolean =>
+      isInBounds(x, y) && context.mask[y * context.width + x] > 0;
+
+    if (!isInBounds(startX, startY) || !isInBounds(endX, endY)) {
+      return false;
+    }
+
+    const dx = Math.abs(endX - startX);
+    const dy = Math.abs(endY - startY);
+    const sx = startX < endX ? 1 : -1;
+    const sy = startY < endY ? 1 : -1;
+    let err = dx - dy;
+
+    let x = startX;
+    let y = startY;
+    const ENDPOINT_CLEARANCE_RADIUS = 1;
+
+    const isWithinEndpointClearance = (px: number, py: number): boolean => {
+      const startDx = px - startX;
+      const startDy = py - startY;
+      const endDx = px - endX;
+      const endDy = py - endY;
+      return (
+        (startDx * startDx + startDy * startDy) <= ENDPOINT_CLEARANCE_RADIUS * ENDPOINT_CLEARANCE_RADIUS ||
+        (endDx * endDx + endDy * endDy) <= ENDPOINT_CLEARANCE_RADIUS * ENDPOINT_CLEARANCE_RADIUS
+      );
+    };
+
+    while (true) {
+      const isEndpoint = (x === startX && y === startY) || (x === endX && y === endY);
+
+      if (!isEndpoint) {
+        const exempt = isWithinEndpointClearance(x, y);
+        if (!exempt && !isWalkable(x, y)) {
+          return false;
+        }
+      }
+
+      if (x === endX && y === endY) break;
+
+      const e2 = 2 * err;
+      if (e2 > -dy) {
+        err -= dy;
+        x += sx;
+      }
+      if (e2 < dx) {
+        err += dx;
+        y += sy;
+      }
+    }
+
+    return true;
+  }
+
+  private async filterEdgesByCorridor(
+    venue: Venue,
+    nodes: Node[],
+    edges: Edge[]
+  ): Promise<Edge[]> {
+    if (edges.length === 0) return edges;
+    if (!venue.mapImageUrl) {
+      throw new Error(`Strict corridor validation requires a map image for venue ${venue.id}`);
+    }
+
+    const imagePath = this.resolveVenueImagePath(venue.mapImageUrl);
+    if (!imagePath) {
+      throw new Error(`Unable to resolve venue map image for strict validation: ${venue.mapImageUrl}`);
+    }
+
+    const maxEdgeUpdatedAt = edges.reduce((max, edge) => {
+      const t = edge.updatedAt instanceof Date ? edge.updatedAt.getTime() : new Date(edge.updatedAt).getTime();
+      return Number.isFinite(t) ? Math.max(max, t) : max;
+    }, 0);
+    const imageMtime = fs.statSync(imagePath).mtimeMs;
+    const cacheKey = [
+      venue.mapImageUrl,
+      imagePath,
+      imageMtime,
+      venue.width ?? 'na',
+      venue.height ?? 'na',
+      edges.length,
+      maxEdgeUpdatedAt,
+    ].join('|');
+
+    const cached = this.edgeValidationCache.get(venue.id);
+    if (cached && cached.key === cacheKey) {
+      return edges.filter(edge => cached.allowedEdgeIds.has(edge.id));
+    }
+
+    const context = await this.buildWalkableValidationContext(imagePath);
+    const scaleX = venue.width && venue.width > 0 ? context.width / venue.width : 1;
+    const scaleY = venue.height && venue.height > 0 ? context.height / venue.height : 1;
+    const nodeById = new Map(nodes.map(node => [node.id, node]));
+
+    const validEdges: Edge[] = [];
+    const allowedEdgeIds = new Set<string>();
+
+    for (const edge of edges) {
+      const from = nodeById.get(edge.fromNodeId);
+      const to = nodeById.get(edge.toNodeId);
+      if (!from || !to) continue;
+
+      if (this.hasCorridorLineOfSight(from, to, context, scaleX, scaleY)) {
+        validEdges.push(edge);
+        allowedEdgeIds.add(edge.id);
+      }
+    }
+
+    if (validEdges.length === 0) {
+      throw new Error(`All edges failed strict corridor validation for venue ${venue.id}`);
+    }
+
+    const rejected = edges.length - validEdges.length;
+    if (rejected > 0) {
+      console.warn(`[routing] strict corridor validation rejected ${rejected}/${edges.length} edges for venue ${venue.id}`);
+    }
+
+    this.edgeValidationCache.set(venue.id, { key: cacheKey, allowedEdgeIds });
+    return validEdges;
   }
 
   /**
@@ -305,7 +518,7 @@ export class PathfindingService {
         // Check if backward search has visited this node
         if (bwdClosed.has(current.nodeId)) {
           const totalDist = (fwdGScore.get(current.nodeId) ?? Infinity) +
-                           (bwdGScore.get(current.nodeId) ?? Infinity);
+            (bwdGScore.get(current.nodeId) ?? Infinity);
           if (totalDist < bestDistance) {
             bestDistance = totalDist;
             meetNode = current.nodeId;
@@ -324,8 +537,15 @@ export class PathfindingService {
           const neighborNode = allNodes.get(neighbor.nodeId);
           if (!neighborNode) continue;
 
-          // Skip booth nodes (except destination)
-          if (neighborNode.type === 'booth' && neighbor.nodeId !== endNodeId) continue;
+          // Never traverse through booth interiors; booth nodes are only valid
+          // as explicit route endpoints.
+          if (
+            neighborNode.type === 'booth' &&
+            neighbor.nodeId !== endNodeId &&
+            neighbor.nodeId !== startNodeId
+          ) {
+            continue;
+          }
 
           const tentativeG = (fwdGScore.get(current.nodeId) ?? Infinity) + neighbor.distance;
           if (tentativeG < (fwdGScore.get(neighbor.nodeId) ?? Infinity)) {
@@ -345,7 +565,7 @@ export class PathfindingService {
         // Check if forward search has visited this node
         if (fwdClosed.has(current.nodeId)) {
           const totalDist = (fwdGScore.get(current.nodeId) ?? Infinity) +
-                           (bwdGScore.get(current.nodeId) ?? Infinity);
+            (bwdGScore.get(current.nodeId) ?? Infinity);
           if (totalDist < bestDistance) {
             bestDistance = totalDist;
             meetNode = current.nodeId;
@@ -364,8 +584,15 @@ export class PathfindingService {
           const neighborNode = allNodes.get(neighbor.nodeId);
           if (!neighborNode) continue;
 
-          // Skip booth nodes (except start)
-          if (neighborNode.type === 'booth' && neighbor.nodeId !== startNodeId) continue;
+          // Never traverse through booth interiors; booth nodes are only valid
+          // as explicit route endpoints.
+          if (
+            neighborNode.type === 'booth' &&
+            neighbor.nodeId !== endNodeId &&
+            neighbor.nodeId !== startNodeId
+          ) {
+            continue;
+          }
 
           const tentativeG = (bwdGScore.get(current.nodeId) ?? Infinity) + neighbor.distance;
           if (tentativeG < (bwdGScore.get(neighbor.nodeId) ?? Infinity)) {
@@ -464,18 +691,16 @@ export class PathfindingService {
       rawPath = result.path;
     }
 
-    // Apply SOTA Path Smoothing
-    const smoothedPath = this.smoothPath(rawPath);
-
-    // Enforce strictly orthogonal segments (no diagonals)
-    const orthogonalPath = this.orthogonalizePath(smoothedPath);
-    const orthogonalDistance = this.calculatePathDistance(orthogonalPath);
-    const { directions, simpleDirections } = this.generateDirections(orthogonalPath, venueId, allNodes);
+    // Keep true shortest-path geometry. Forced orthogonalization can introduce
+    // artificial detours and extra turns that do not exist in the computed graph path.
+    const displayPath = this.smoothPath(rawPath);
+    const totalDistance = this.calculatePathDistance(displayPath);
+    const { directions, simpleDirections } = this.generateDirections(displayPath, venueId, allNodes);
 
     return {
-      path: orthogonalPath,
-      totalDistance: orthogonalDistance,
-      estimatedTimeSeconds: this.estimateWalkingTime(orthogonalDistance),
+      path: displayPath,
+      totalDistance,
+      estimatedTimeSeconds: this.estimateWalkingTime(totalDistance),
       directions,
       simpleDirections,
     };
@@ -526,8 +751,15 @@ export class PathfindingService {
         const neighborNode = allNodes.get(neighbor.nodeId);
         if (!neighborNode) continue;
 
-        // Skip booth nodes (except destination)
-        if (neighborNode.type === 'booth' && neighbor.nodeId !== endNodeId) continue;
+        // Never traverse through booth interiors; booth nodes are only valid
+        // as explicit route endpoints.
+        if (
+          neighborNode.type === 'booth' &&
+          neighbor.nodeId !== endNodeId &&
+          neighbor.nodeId !== startNodeId
+        ) {
+          continue;
+        }
 
         const tentativeG = (gScore.get(current.nodeId) ?? Infinity) + neighbor.distance;
         if (tentativeG < (gScore.get(neighbor.nodeId) ?? Infinity)) {
@@ -591,22 +823,21 @@ export class PathfindingService {
       );
 
       if (result) {
-        const smoothedPath = this.smoothPath(result.path);
-        const orthogonalPath = this.orthogonalizePath(smoothedPath);
-        const orthogonalDistance = this.calculatePathDistance(orthogonalPath);
-        const { directions, simpleDirections } = this.generateDirections(orthogonalPath, venueId, allNodes);
+        const displayPath = this.smoothPath(result.path);
+        const totalDistance = this.calculatePathDistance(displayPath);
+        const { directions, simpleDirections } = this.generateDirections(displayPath, venueId, allNodes);
 
         // Only add if sufficiently different (>20% different path length or uses different corridors)
-        const isDifferent = orthogonalDistance > shortestPath.totalDistance * 1.05;
+        const isDifferent = totalDistance > shortestPath.totalDistance * 1.05;
         const hasDifferentNodes = result.path.some(
           (n, idx) => idx > 0 && idx < result.path.length - 1 && !usedNodes.has(n.id)
         );
 
         if (isDifferent || hasDifferentNodes) {
           routes.push({
-            path: orthogonalPath,
-            totalDistance: orthogonalDistance,
-            estimatedTimeSeconds: this.estimateWalkingTime(orthogonalDistance),
+            path: displayPath,
+            totalDistance,
+            estimatedTimeSeconds: this.estimateWalkingTime(totalDistance),
             directions,
             simpleDirections,
           });
@@ -674,7 +905,13 @@ export class PathfindingService {
         const neighborNode = allNodes.get(neighbor.nodeId);
         if (!neighborNode) continue;
 
-        if (neighborNode.type === 'booth' && neighbor.nodeId !== endNodeId) continue;
+        if (
+          neighborNode.type === 'booth' &&
+          neighbor.nodeId !== endNodeId &&
+          neighbor.nodeId !== startNodeId
+        ) {
+          continue;
+        }
 
         // Apply penalty to nodes used in previous paths
         const penalty = penalizedNodes.has(neighbor.nodeId) ? penaltyFactor : 1.0;

@@ -46,7 +46,7 @@ export const QRGenerator: React.FC<QRGeneratorProps> = ({ venueId, nodes }) => {
                             <ul className="list-disc list-inside space-y-1 ml-1">
                                 <li>Print these codes and place them at physical locations.</li>
                                 <li>Visitors scan them to instantly set their "Start" location.</li>
-                                <li>QR codes link to: <code className="bg-white px-1 py-0.5 rounded border border-slate-200 text-xs">/venue/{venueId}?node=NODE_ID</code></li>
+                                <li>QR codes link to: <code className="bg-white px-1 py-0.5 rounded border border-slate-200 text-xs">/booth/NODE_ID</code> (unified page with navigation + queue)</li>
                             </ul>
                         </div>
                     </div>

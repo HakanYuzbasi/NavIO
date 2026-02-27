@@ -17,20 +17,20 @@ export const VenueList: React.FC<VenueListProps> = ({
     onView
 }) => {
     return (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-                <h2 className="font-semibold text-slate-900 flex items-center gap-2">
-                    <Map size={18} className="text-slate-500" />
+        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between">
+                <h2 className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+                    <Map size={18} className="text-slate-500 dark:text-slate-400" />
                     Venues
                 </h2>
-                <span className="text-xs bg-slate-200 text-slate-600 px-2 py-1 rounded-full">
+                <span className="text-xs bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-1 rounded-full">
                     {venues.length}
                 </span>
             </div>
 
-            <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto">
+            <div className="divide-y divide-slate-100 dark:divide-slate-800/50 max-h-[400px] overflow-y-auto">
                 {venues.length === 0 ? (
-                    <div className="p-8 text-center text-slate-500 text-sm">
+                    <div className="p-8 text-center text-slate-500 dark:text-slate-400 text-sm">
                         No venues found. Create one to get started.
                     </div>
                 ) : (
@@ -39,19 +39,19 @@ export const VenueList: React.FC<VenueListProps> = ({
                             key={venue.id}
                             onClick={() => onSelect(venue)}
                             className={cn(
-                                "p-4 flex items-center justify-between cursor-pointer transition-colors hover:bg-slate-50",
-                                selectedVenueId === venue.id ? "bg-primary-50 hover:bg-primary-50 border-l-4 border-l-primary-500" : "border-l-4 border-l-transparent"
+                                "p-4 flex items-center justify-between cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50",
+                                selectedVenueId === venue.id ? "bg-primary-50 dark:bg-primary-900/10 hover:bg-primary-50 dark:hover:bg-primary-900/20 border-l-4 border-l-primary-500" : "border-l-4 border-l-transparent"
                             )}
                         >
                             <div className="flex-1 min-w-0">
                                 <p className={cn(
                                     "font-medium truncate",
-                                    selectedVenueId === venue.id ? "text-primary-900" : "text-slate-900"
+                                    selectedVenueId === venue.id ? "text-primary-900 dark:text-primary-400" : "text-slate-900 dark:text-slate-300"
                                 )}>
                                     {venue.name}
                                 </p>
                                 {venue.width && (
-                                    <p className="text-xs text-slate-500 mt-0.5">
+                                    <p className="text-xs text-slate-500 dark:text-slate-500 mt-0.5">
                                         {venue.width} × {venue.height}
                                     </p>
                                 )}
@@ -62,7 +62,7 @@ export const VenueList: React.FC<VenueListProps> = ({
                                     e.stopPropagation();
                                     onView(venue);
                                 }}
-                                className="p-2 text-slate-400 hover:text-primary-600 hover:bg-white rounded-lg transition-colors ml-2"
+                                className="p-2 text-slate-400 dark:text-slate-500 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-white dark:hover:bg-slate-800 rounded-lg transition-colors ml-2"
                                 title="View Venue"
                             >
                                 <ExternalLink size={16} />
@@ -72,7 +72,7 @@ export const VenueList: React.FC<VenueListProps> = ({
                                 size={16}
                                 className={cn(
                                     "ml-1 transition-transform",
-                                    selectedVenueId === venue.id ? "text-primary-400" : "text-slate-300"
+                                    selectedVenueId === venue.id ? "text-primary-400" : "text-slate-300 dark:text-slate-600"
                                 )}
                             />
                         </div>

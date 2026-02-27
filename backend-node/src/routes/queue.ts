@@ -65,7 +65,8 @@ router.post('/:boothId/next', async (req: Request, res: Response) => {
     const entry = await queueService.callNext(boothId);
 
     if (!entry) {
-      return res.json({ message: 'No visitors waiting in queue' });
+      res.json({ message: 'No visitors waiting in queue' });
+      return;
     }
 
     res.json(entry);
@@ -85,7 +86,8 @@ router.post('/:boothId/complete', async (req: Request, res: Response) => {
     const entry = await queueService.completeVisit(boothId);
 
     if (!entry) {
-      return res.json({ message: 'No active visit to complete' });
+      res.json({ message: 'No active visit to complete' });
+      return;
     }
 
     res.json(entry);
@@ -105,7 +107,8 @@ router.get('/entry/:entryId', async (req: Request, res: Response) => {
     const entry = await queueService.getEntry(entryId);
 
     if (!entry) {
-      return res.status(404).json({ error: 'Queue entry not found' });
+      res.status(404).json({ error: 'Queue entry not found' });
+      return;
     }
 
     const position = await queueService.getPosition(entryId);

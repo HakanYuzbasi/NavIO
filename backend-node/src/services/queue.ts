@@ -49,6 +49,13 @@ export class QueueService {
     );
 
     const entry = toQueueEntry(rows[0]);
+
+    // TODO: MVP SMS Integration (Twilio)
+    // If phone number was entered, log it but do not send SMS in MVP
+    if (visitorPhone) {
+      console.log(`[Twilio Stub] Would send SMS to ${visitorPhone}: "You have joined the queue for booth ${boothId}. Your position is ${position}."`);
+    }
+
     return {
       entry,
       position,

@@ -11,6 +11,7 @@ import sharp from 'sharp';
 import { dataStore } from '../models/store';
 import { Venue, CreateVenueDTO, Node, Edge } from '../types';
 import { generateNavigationGraph } from '../services/accurateDetector';
+import { AuthRequest, requireAuth } from '../middleware/auth';
 
 /**
  * Get image dimensions from a file path or URL
@@ -69,7 +70,8 @@ router.get('/:id', async (req: Request, res: Response) => {
   try {
     const venue = await dataStore.getVenue(req.params.id);
     if (!venue) {
-      return res.status(404).json({ error: 'Venue not found' });
+      res.status(404).json({ error: 'Venue not found' });
+      return;
     }
     res.json(venue);
   } catch (error) {
@@ -82,12 +84,19 @@ router.get('/:id', async (req: Request, res: Response) => {
  * Create a new venue
  * Auto-detects image dimensions if mapImageUrl is provided
  */
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const dto: CreateVenueDTO = req.body;
+    const orgId = req.user?.orgId;
+
+    if (!orgId) {
+      res.status(401).json({ error: 'Unauthorized user' });
+      return;
+    }
 
     if (!dto.name || dto.name.trim().length === 0) {
-      return res.status(400).json({ error: 'Venue name is required' });
+      res.status(400).json({ error: 'Venue name is required' });
+      return;
     }
 
     // Auto-detect image dimensions if mapImageUrl is provided
@@ -105,6 +114,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     const venue: Venue = {
       id: uuidv4(),
+      orgId,
       name: dto.name,
       mapImageUrl: dto.mapImageUrl,
       width,
@@ -125,13 +135,14 @@ router.post('/', async (req: Request, res: Response) => {
  * PUT /api/venues/:id
  * Update a venue
  */
-router.put('/:id', async (req: Request, res: Response) => {
+router.put('/:id', requireAuth, async (req: Request, res: Response) => {
   try {
     const updates: Partial<CreateVenueDTO> = req.body;
     const updated = await dataStore.updateVenue(req.params.id, updates);
 
     if (!updated) {
-      return res.status(404).json({ error: 'Venue not found' });
+      res.status(404).json({ error: 'Venue not found' });
+      return;
     }
 
     res.json(updated);
@@ -144,11 +155,12 @@ router.put('/:id', async (req: Request, res: Response) => {
  * DELETE /api/venues/:id
  * Delete a venue and all associated data
  */
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', requireAuth, async (req: Request, res: Response) => {
   try {
     const deleted = await dataStore.deleteVenue(req.params.id);
     if (!deleted) {
-      return res.status(404).json({ error: 'Venue not found' });
+      res.status(404).json({ error: 'Venue not found' });
+      return;
     }
     res.status(204).send();
   } catch (error) {
@@ -169,7 +181,8 @@ router.post('/:id/import-navigation-graph', async (req: Request, res: Response) 
     // Verify venue exists
     const venue = await dataStore.getVenue(venueId);
     if (!venue) {
-      return res.status(404).json({ error: 'Venue not found' });
+      res.status(404).json({ error: 'Venue not found' });
+      return;
     }
 
     // Resolve image path
@@ -185,11 +198,13 @@ router.post('/:id/import-navigation-graph', async (req: Request, res: Response) 
         resolvedImagePath = venue.mapImageUrl;
       }
     } else {
-      return res.status(400).json({ error: 'No image path provided and venue has no mapImageUrl' });
+      res.status(400).json({ error: 'No image path provided and venue has no mapImageUrl' });
+      return;
     }
 
     if (!fs.existsSync(resolvedImagePath)) {
-      return res.status(404).json({ error: `Image not found: ${resolvedImagePath}` });
+      res.status(404).json({ error: `Image not found: ${resolvedImagePath}` });
+      return;
     }
 
     console.log(`Importing navigation graph for venue ${venueId} from ${resolvedImagePath}`);
@@ -247,7 +262,7 @@ router.post('/:id/import-navigation-graph', async (req: Request, res: Response) 
 
     console.log(`Imported ${boothCount} booths, ${waypointCount} waypoints, ${navGraph.edges.length} edges`);
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       imported: {
         booths: boothCount,
@@ -257,6 +272,8 @@ router.post('/:id/import-navigation-graph', async (req: Request, res: Response) 
       },
       venueId,
     });
+
+    return;
   } catch (error: any) {
     console.error('Import navigation graph error:', error);
     res.status(500).json({

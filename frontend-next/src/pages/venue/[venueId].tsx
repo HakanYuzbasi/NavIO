@@ -4,7 +4,7 @@
  * Shows clean step-by-step navigation like airport wayfinding
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import InteractiveMap from '../../components/InteractiveMap';
@@ -12,7 +12,7 @@ import QRScanner from '../../components/QRScanner';
 import Layout from '../../components/Layout';
 import { Node, Venue, Edge, RouteResponse } from '../../types';
 import { venueApi, nodeApi, edgeApi, routingApi } from '../../lib/api';
-import { QrCode, Search, Navigation, MapPin, X, ChevronRight, Clock, Info, Menu, CheckCircle2 } from 'lucide-react';
+import { QrCode, Search, Navigation, MapPin, X, ChevronRight, Clock, Info, Menu, CheckCircle2, ArrowUpDown, Route as RouteIcon, List } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 
@@ -26,6 +26,7 @@ interface TurnPoint {
 export default function VenueNavigationPage() {
   const router = useRouter();
   const { venueId, node: nodeIdFromQR } = router.query;
+  const debugUiMode = router.query.debugUi === '1';
 
   const [venue, setVenue] = useState<Venue | null>(null);
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -41,6 +42,9 @@ export default function VenueNavigationPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeStep, setActiveStep] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const topOverlayRef = useRef<HTMLDivElement | null>(null);
+  const [mapUiTopOffset, setMapUiTopOffset] = useState(132);
 
   useEffect(() => {
     if (venueId && typeof venueId === 'string') {
@@ -97,13 +101,36 @@ export default function VenueNavigationPage() {
     }
   };
 
+  const resolveBestNodeCandidate = (selected: Node, anchor: Node | null): Node => {
+    if (!anchor) return selected;
+
+    // Multiple graph nodes can represent the same visible location.
+    // Choose the candidate closest to the opposite endpoint to avoid detours.
+    const candidates = nodes.filter(n => n.name === selected.name);
+    if (candidates.length <= 1) return selected;
+
+    let best = selected;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const candidate of candidates) {
+      const d = Math.hypot(candidate.x - anchor.x, candidate.y - anchor.y);
+      if (d < bestDistance) {
+        best = candidate;
+        bestDistance = d;
+      }
+    }
+
+    return best;
+  };
+
   const handleNodeSelect = (node: Node) => {
     if (selectorType === 'origin') {
-      setCurrentLocation(node);
-      if (destination) calculateRoute(node.id, destination.id);
+      const resolvedOrigin = resolveBestNodeCandidate(node, destination);
+      setCurrentLocation(resolvedOrigin);
+      if (destination) calculateRoute(resolvedOrigin.id, destination.id);
     } else {
-      setDestination(node);
-      if (currentLocation) calculateRoute(currentLocation.id, node.id);
+      const resolvedDestination = resolveBestNodeCandidate(node, currentLocation);
+      setDestination(resolvedDestination);
+      if (currentLocation) calculateRoute(currentLocation.id, resolvedDestination.id);
     }
     setShowNodeSelector(false);
     setSearchQuery('');
@@ -121,6 +148,7 @@ export default function VenueNavigationPage() {
       });
 
       setRoute(routeData);
+      setActiveStep(0);
       setError(null);
       setSidebarOpen(true); // Open sidebar/drawer on route calc
     } catch (err: any) {
@@ -134,7 +162,29 @@ export default function VenueNavigationPage() {
   const handleClearRoute = () => {
     setRoute(null);
     setDestination(null);
+    setActiveStep(0);
     setSidebarOpen(false);
+  };
+
+  const handleSwapLocations = () => {
+    if (!currentLocation && !destination) return;
+
+    const nextCurrent = destination;
+    const nextDestination = currentLocation;
+
+    setCurrentLocation(nextCurrent);
+    setDestination(nextDestination);
+    setRoute(null);
+    setActiveStep(0);
+
+    if (nextCurrent && nextDestination) {
+      calculateRoute(nextCurrent.id, nextDestination.id);
+    }
+  };
+
+  const handleStartRoute = () => {
+    if (!currentLocation || !destination) return;
+    calculateRoute(currentLocation.id, destination.id);
   };
 
   // Only show booth nodes as selectable destinations (not corridor waypoints)
@@ -142,12 +192,13 @@ export default function VenueNavigationPage() {
   // (north, south, east, west entrances) but user should only see ONE entry per booth
   const selectableNodes = useMemo(() => {
     const boothAndEntranceNodes = nodes.filter(node => node.type === 'booth' || node.type === 'entrance');
+    const sourceNodes = boothAndEntranceNodes.length > 0 ? boothAndEntranceNodes : nodes;
 
     // Deduplicate by name - keep only one node per unique name
     const seenNames = new Set<string>();
     const uniqueNodes: Node[] = [];
 
-    for (const node of boothAndEntranceNodes) {
+    for (const node of sourceNodes) {
       if (!seenNames.has(node.name)) {
         seenNames.add(node.name);
         uniqueNodes.push(node);
@@ -186,7 +237,7 @@ export default function VenueNavigationPage() {
       let angleDiff = newAngle - prevAngle;
       while (angleDiff > 180) angleDiff -= 360;
       while (angleDiff < -180) angleDiff += 360;
-      if (Math.abs(angleDiff) < 35) return null; // Slightly more sensitive threshold
+      if (Math.abs(angleDiff) < 50) return null;
       return angleDiff > 0 ? 'turn-right' : 'turn-left';
     };
 
@@ -236,6 +287,12 @@ export default function VenueNavigationPage() {
         const turn = classifyTurn(prevAngle, currentAngle);
 
         if (turn) {
+          const prevDistance = calculateDistance(path[i - 1], path[i]);
+          const nextDistance = calculateDistance(path[i], path[i + 1]);
+          if (prevDistance < 30 || nextDistance < 30) {
+            continue;
+          }
+
           const turnDirection = turn === 'turn-left' ? 'Turn left' : 'Turn right';
 
           // Find a meaningful landmark reference for this turn
@@ -276,6 +333,66 @@ export default function VenueNavigationPage() {
     return points;
   }, [route, currentLocation, destination, nodes]);
 
+  useEffect(() => {
+    if (!debugUiMode || !venue || route || nodes.length < 2) return;
+
+    const preferred = nodes.filter(node => node.type === 'entrance' || node.type === 'booth');
+    const pool = preferred.length >= 2 ? preferred : nodes;
+    const start = currentLocation ?? pool[0];
+    const end = destination ?? pool.find(node => node.id !== start.id);
+    if (!start || !end) return;
+
+    if (!currentLocation) setCurrentLocation(start);
+    if (!destination) setDestination(end);
+
+    const viaCandidates = nodes.filter(
+      node =>
+        node.id !== start.id &&
+        node.id !== end.id &&
+        node.type !== 'booth'
+    );
+    const via = viaCandidates.length > 0 ? viaCandidates[Math.floor(viaCandidates.length / 2)] : null;
+    const mockPath = via ? [start, via, end] : [start, end];
+
+    let totalDistance = 0;
+    for (let i = 0; i < mockPath.length - 1; i++) {
+      totalDistance += Math.hypot(mockPath[i + 1].x - mockPath[i].x, mockPath[i + 1].y - mockPath[i].y);
+    }
+
+    setRoute({
+      path: mockPath,
+      totalDistance,
+      estimatedTimeSeconds: Math.max(30, Math.round(totalDistance / 1.4)),
+    });
+    setSidebarOpen(true);
+    setActiveStep(0);
+    setError(null);
+  }, [debugUiMode, venue, route, nodes, currentLocation, destination]);
+
+  useEffect(() => {
+    const viewportEl = viewportRef.current;
+    const topOverlayEl = topOverlayRef.current;
+    if (!viewportEl || !topOverlayEl || typeof window === 'undefined') return;
+
+    const updateOffset = () => {
+      const viewportRect = viewportEl.getBoundingClientRect();
+      const overlayRect = topOverlayEl.getBoundingClientRect();
+      const relativeBottom = overlayRect.bottom - viewportRect.top;
+      // Keep map controls below top overlays with a stable breathing gap.
+      setMapUiTopOffset(Math.max(24, Math.ceil(relativeBottom + 12)));
+    };
+
+    updateOffset();
+    const resizeObserver = new ResizeObserver(updateOffset);
+    resizeObserver.observe(topOverlayEl);
+    window.addEventListener('resize', updateOffset);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', updateOffset);
+    };
+  }, [route, error, sidebarOpen, currentLocation, destination, turnPoints.length]);
+
   if (loading && !venue) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50">
@@ -305,6 +422,10 @@ export default function VenueNavigationPage() {
     );
   }
 
+  const hasDirectionsPane = Boolean(route && sidebarOpen);
+  const topOverlayShiftClass = hasDirectionsPane ? "lg:left-[calc(50%+190px)]" : "";
+  const desktopMapShiftClass = hasDirectionsPane ? "lg:ml-[396px] lg:w-[calc(100%-396px)]" : "w-full";
+
   return (
     <Layout>
       <Head>
@@ -313,50 +434,142 @@ export default function VenueNavigationPage() {
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
       </Head>
 
-      <div className="relative h-[calc(100vh-64px)] overflow-hidden bg-slate-100 dark:bg-slate-900">
+      <div ref={viewportRef} className="relative h-[calc(100vh-64px)] overflow-hidden bg-slate-100 dark:bg-slate-900">
 
-        {/* SOTA Sticky Navigation Header (Glassmorphism) */}
-        {route && turnPoints.length > 0 && (
-          <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[40] w-[90%] max-w-sm">
+        {/* Top Navigation Overlay Stack */}
+        <div
+          ref={topOverlayRef}
+          className={cn("absolute top-4 left-1/2 -translate-x-1/2 z-[40] w-[95%] max-w-xl flex flex-col gap-3", topOverlayShiftClass)}
+        >
+          <motion.div
+            initial={{ y: -18, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border border-slate-200/80 dark:border-slate-700 rounded-2xl p-3 shadow-xl"
+          >
+            <div className="space-y-2">
+              <button
+                onClick={() => { setSelectorType('origin'); setShowNodeSelector(true); }}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/70 flex items-center gap-3 text-left hover:border-indigo-300 dark:hover:border-indigo-500 transition-colors"
+              >
+                <div className="w-7 h-7 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                  <MapPin size={14} fill="currentColor" />
+                </div>
+                <span className={cn("text-sm font-semibold truncate", currentLocation ? "text-slate-900 dark:text-white" : "text-slate-400 dark:text-slate-500")}>
+                  {currentLocation?.name || 'Choose start point'}
+                </span>
+              </button>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { setSelectorType('destination'); setShowNodeSelector(true); }}
+                  className="flex-1 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center gap-3 text-left hover:border-indigo-300 dark:hover:border-indigo-500 transition-colors"
+                >
+                  <div className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+                    <FlagIcon size={14} fill="currentColor" />
+                  </div>
+                  <span className={cn("text-sm font-semibold truncate", destination ? "text-slate-900 dark:text-white" : "text-slate-400 dark:text-slate-500")}>
+                    {destination?.name || 'Choose destination'}
+                  </span>
+                </button>
+
+                <button
+                  onClick={handleSwapLocations}
+                  className="w-11 h-11 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-center text-slate-500 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:border-indigo-300 dark:hover:border-indigo-500 transition-colors"
+                  title="Swap start and destination"
+                >
+                  <ArrowUpDown size={18} />
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-3 flex items-center justify-between gap-2">
+              {route ? (
+                <div className="flex items-center gap-3 text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-300">
+                  <span className="px-2 py-1 rounded-full bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300">
+                    {Math.ceil(route.estimatedTimeSeconds / 60)} min
+                  </span>
+                  <span>{Math.round(route.totalDistance)} m</span>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                  Set start and destination to begin navigation
+                </p>
+              )}
+
+              <div className="flex items-center gap-2">
+                {!route && currentLocation && destination && (
+                  <button
+                    onClick={handleStartRoute}
+                    className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition-colors flex items-center gap-1.5"
+                  >
+                    <RouteIcon size={14} />
+                    Navigate
+                  </button>
+                )}
+                {route && (
+                  <button
+                    onClick={() => setSidebarOpen(prev => !prev)}
+                    className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center gap-1.5"
+                  >
+                    <List size={14} />
+                    Steps
+                  </button>
+                )}
+              </div>
+            </div>
+          </motion.div>
+
+          {error && (
             <motion.div
-              initial={{ y: -100, opacity: 0 }}
+              initial={{ y: -12, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              className="bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-[2rem] p-5 shadow-[0_20px_50px_rgba(0,0,0,0.3)] flex items-center gap-5"
+              className="p-3 bg-red-50/95 dark:bg-red-900/40 backdrop-blur-sm text-red-700 dark:text-red-200 text-sm rounded-xl flex items-start gap-2 border border-red-200/80 dark:border-red-800 shadow-lg"
             >
-              <div className="w-14 h-14 bg-indigo-600 rounded-2xl flex items-center justify-center shrink-0 shadow-lg shadow-indigo-500/20">
+              <Info size={16} className="mt-0.5 shrink-0" />
+              <p className="font-medium">{error}</p>
+            </motion.div>
+          )}
+
+          {route && turnPoints.length > 0 && (
+            <motion.div
+              initial={{ y: -16, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              className="bg-slate-900/92 backdrop-blur-xl border border-slate-700 rounded-2xl p-4 shadow-xl flex items-center gap-4"
+            >
+              <div className="w-11 h-11 bg-indigo-600 rounded-xl flex items-center justify-center shrink-0">
                 {turnPoints[activeStep]?.type === 'turn-left' ? (
-                  <ChevronRight size={32} className="rotate-180 text-white" strokeWidth={3} />
+                  <ChevronRight size={24} className="rotate-180 text-white" strokeWidth={3} />
                 ) : turnPoints[activeStep]?.type === 'turn-right' ? (
-                  <ChevronRight size={32} className="text-white" strokeWidth={3} />
+                  <ChevronRight size={24} className="text-white" strokeWidth={3} />
                 ) : turnPoints[activeStep]?.type === 'destination' ? (
-                  <FlagIcon size={28} fill="white" className="text-white" />
+                  <FlagIcon size={22} fill="white" className="text-white" />
                 ) : (
-                  <Navigation size={28} className="text-white animate-bounce" strokeWidth={3} />
+                  <Navigation size={22} className="text-white" strokeWidth={3} />
                 )}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Next Step</p>
-                <h2 className="text-white font-black text-lg leading-tight truncate">
+                <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest mb-1">Next Step</p>
+                <h2 className="text-white font-bold text-base leading-tight truncate">
                   {turnPoints[activeStep]?.instruction || 'Initializing...'}
                 </h2>
               </div>
               <button
                 onClick={() => setActiveStep((prev) => Math.min(prev + 1, turnPoints.length - 1))}
-                className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors"
+                className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors"
                 title="Next turn"
               >
-                <ChevronRight size={20} className="text-white" />
+                <ChevronRight size={18} className="text-white" />
               </button>
             </motion.div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Map Container - Full Screen */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.6 }}
-          className="w-full h-full"
+          className={cn("h-full transition-[margin,width] duration-300 ease-out", desktopMapShiftClass)}
         >
           <InteractiveMap
             venue={venue}
@@ -366,36 +579,37 @@ export default function VenueNavigationPage() {
             currentLocation={currentLocation || undefined}
             destination={destination || undefined}
             turnPoints={turnPoints.length > 0 ? turnPoints : undefined}
+            uiTopOffset={mapUiTopOffset}
           />
         </motion.div>
 
         {/* Floating Action Dock (Bottom Right) */}
-        <div className="absolute bottom-8 right-6 z-10 flex flex-col gap-4">
+        <div className="absolute bottom-8 right-6 z-10 flex flex-col gap-3">
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => setShowScanner(true)}
-            className="w-14 h-14 bg-slate-900 text-white rounded-2xl shadow-xl shadow-slate-900/20 flex items-center justify-center hover:bg-slate-800 transition-colors"
+            className="w-12 h-12 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-900/20 flex items-center justify-center hover:bg-slate-800 transition-colors"
             title="Scan QR Code"
           >
-            <QrCode size={24} />
+            <QrCode size={20} />
           </motion.button>
 
-          {!sidebarOpen && (
+          {route && !sidebarOpen && (
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={() => setSidebarOpen(true)}
-              className="w-14 h-14 bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 rounded-2xl shadow-xl shadow-slate-200/50 dark:shadow-black/50 flex items-center justify-center hover:bg-indigo-50 dark:hover:bg-slate-700 transition-colors"
+              className="w-12 h-12 bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 rounded-xl shadow-lg shadow-slate-200/50 dark:shadow-black/50 flex items-center justify-center hover:bg-indigo-50 dark:hover:bg-slate-700 transition-colors"
             >
-              <Menu size={24} />
+              <Menu size={20} />
             </motion.button>
           )}
         </div>
 
         {/* Glass Sidebar / Bottom Sheet */}
         <AnimatePresence>
-          {(sidebarOpen || route || !currentLocation || !destination) && (
+          {route && sidebarOpen && (
             <>
               {/* Mobile Backdrop for focus */}
               <motion.div
@@ -403,7 +617,7 @@ export default function VenueNavigationPage() {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 onClick={() => setSidebarOpen(false)}
-                className="absolute inset-0 bg-black/5 z-20 sm:hidden block backdrop-blur-[1px]"
+                className="absolute inset-0 bg-black/5 z-20 lg:hidden block backdrop-blur-[1px]"
               />
 
               <motion.div
@@ -412,7 +626,7 @@ export default function VenueNavigationPage() {
                   // Mobile: Bottom Sheet style
                   "bottom-0 left-0 right-0 rounded-t-[2.5rem] max-h-[85vh]",
                   // Desktop: Floating sidebar style
-                  "sm:top-4 sm:bottom-4 sm:left-4 sm:w-[380px] sm:rounded-3xl sm:border sm:max-h-[calc(100vh-32px)]"
+                  "lg:top-4 lg:bottom-4 lg:left-4 lg:w-[380px] lg:rounded-3xl lg:border lg:max-h-[calc(100vh-32px)]"
                 )}
                 initial={{ y: "100%", x: 0 }}
                 animate={{ y: 0, x: 0 }}
@@ -420,201 +634,102 @@ export default function VenueNavigationPage() {
                 transition={{ type: "spring", damping: 28, stiffness: 300 }}
               >
                 {/* Drag Handle for Mobile */}
-                <div className="w-full h-6 flex items-center justify-center sm:hidden shrink-0" onClick={() => setSidebarOpen(false)}>
+                <div className="w-full h-6 flex items-center justify-center lg:hidden shrink-0" onClick={() => setSidebarOpen(false)}>
                   <div className="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full" />
                 </div>
 
                 <div className="px-6 pb-4 pt-2 border-b border-slate-100/50 dark:border-slate-800/50 flex items-center justify-between">
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">
-                    {route ? 'Current Trip' : 'Plan Navigation'}
-                  </h3>
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">Directions</h3>
                   <button
                     onClick={() => setSidebarOpen(false)}
-                    className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors hidden sm:block"
+                    className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors hidden lg:block"
                   >
                     <X size={20} />
                   </button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-6 space-y-8 scrollbar-hide">
-                  {error && (
-                    <div className="p-4 bg-red-50/80 backdrop-blur-sm text-red-600 text-sm rounded-2xl flex items-start gap-3 border border-red-100">
-                      <Info size={16} className="mt-0.5 shrink-0" />
-                      <p className="font-medium">{error}</p>
-                    </div>
-                  )}
-
-                  {/* Active Route View */}
-                  {route && currentLocation && destination ? (
-                    <div className="space-y-8">
-                      {/* Trip Stats */}
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-indigo-50/50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800 p-4 rounded-2xl">
-                          <div className="text-indigo-600 dark:text-indigo-400 text-[10px] font-black uppercase tracking-widest mb-1">Duration</div>
-                          <div className="text-2xl font-black text-indigo-950 dark:text-white leading-none">{Math.ceil(route.estimatedTimeSeconds / 60)}<span className="text-xs font-bold ml-1 opacity-60">min</span></div>
-                        </div>
-                        <div className="bg-slate-50/50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 p-4 rounded-2xl">
-                          <div className="text-slate-500 dark:text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">Distance</div>
-                          <div className="text-2xl font-black text-slate-950 dark:text-white leading-none">{Math.round(route.totalDistance)}<span className="text-xs font-bold ml-1 opacity-60">m</span></div>
-                        </div>
+                  <div className="space-y-8">
+                    {/* Trip Stats */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-indigo-50/50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800 p-4 rounded-2xl">
+                        <div className="text-indigo-600 dark:text-indigo-400 text-[10px] font-black uppercase tracking-widest mb-1">Duration</div>
+                        <div className="text-2xl font-black text-indigo-950 dark:text-white leading-none">{Math.ceil(route.estimatedTimeSeconds / 60)}<span className="text-xs font-bold ml-1 opacity-60">min</span></div>
                       </div>
+                      <div className="bg-slate-50/50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 p-4 rounded-2xl">
+                        <div className="text-slate-500 dark:text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">Distance</div>
+                        <div className="text-2xl font-black text-slate-950 dark:text-white leading-none">{Math.round(route.totalDistance)}<span className="text-xs font-bold ml-1 opacity-60">m</span></div>
+                      </div>
+                    </div>
 
-                      {/* Directions Timeline */}
-                      <div>
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 pl-1">Directions</h4>
-                        <div className="space-y-4 relative pl-4">
-                          {/* Premium Vertical Progress Line */}
-                          <div className="absolute left-[27px] top-6 bottom-6 w-[2px] bg-slate-100 dark:bg-slate-800" />
-                          <div
-                            className="absolute left-[27px] top-6 w-[2px] bg-indigo-500 transition-all duration-700 shadow-[0_0_8px_rgba(99,102,241,0.5)]"
-                            style={{ height: `${(activeStep / Math.max(1, turnPoints.length - 1)) * 100}%` }}
-                          />
+                    {/* Directions Timeline */}
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 pl-1">Directions</h4>
+                      <div className="space-y-4 relative pl-4">
+                        <div className="absolute left-[27px] top-6 bottom-6 w-[2px] bg-slate-100 dark:bg-slate-800" />
+                        <div
+                          className="absolute left-[27px] top-6 w-[2px] bg-indigo-500 transition-all duration-700 shadow-[0_0_8px_rgba(99,102,241,0.5)]"
+                          style={{ height: `${(activeStep / Math.max(1, turnPoints.length - 1)) * 100}%` }}
+                        />
 
-                          {turnPoints.map((point, index) => (
-                            <motion.div
-                              initial={{ opacity: 0, scale: 0.95 }}
-                              animate={{ opacity: 1, scale: 1 }}
-                              transition={{ delay: index * 0.05 }}
-                              key={index}
-                              onClick={() => setActiveStep(index)}
-                              className={cn(
-                                "relative flex gap-4 p-4 rounded-2xl transition-all cursor-pointer group",
-                                activeStep === index
-                                  ? "bg-indigo-600 shadow-xl shadow-indigo-200/50 z-10 scale-[1.03]"
-                                  : "hover:bg-slate-50 dark:hover:bg-slate-800/50 border border-transparent hover:border-slate-100"
+                        {turnPoints.map((point, index) => (
+                          <motion.div
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ delay: index * 0.05 }}
+                            key={index}
+                            onClick={() => setActiveStep(index)}
+                            className={cn(
+                              "relative flex gap-4 p-4 rounded-2xl transition-all cursor-pointer group",
+                              activeStep === index
+                                ? "bg-indigo-600 shadow-xl shadow-indigo-200/50 z-10 scale-[1.03]"
+                                : "hover:bg-slate-50 dark:hover:bg-slate-800/50 border border-transparent hover:border-slate-100"
+                            )}
+                          >
+                            <div className={cn(
+                              "w-8 h-8 rounded-full flex items-center justify-center shrink-0 z-10 transition-all ring-4 ring-white dark:ring-slate-900",
+                              activeStep === index
+                                ? "bg-white text-indigo-600 shadow-lg"
+                                : index < activeStep
+                                  ? "bg-green-500 text-white shadow-md shadow-green-200"
+                                  : "bg-slate-100 dark:bg-slate-800 text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600"
+                            )}>
+                              {index < activeStep ? (
+                                <CheckCircle2 size={16} strokeWidth={3} />
+                              ) : point.type === 'start' ? (
+                                <div className="w-2 h-2 bg-current rounded-full" />
+                              ) : point.type === 'destination' ? (
+                                <FlagIcon size={14} fill="currentColor" />
+                              ) : (
+                                <ChevronRight size={14} className={cn(point.type === 'turn-left' && "rotate-180")} strokeWidth={3} />
                               )}
-                            >
-                              <div className={cn(
-                                "w-8 h-8 rounded-full flex items-center justify-center shrink-0 z-10 transition-all ring-4 ring-white dark:ring-slate-900",
-                                activeStep === index
-                                  ? "bg-white text-indigo-600 shadow-lg"
-                                  : index < activeStep
-                                    ? "bg-green-500 text-white shadow-md shadow-green-200"
-                                    : "bg-slate-100 dark:bg-slate-800 text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600"
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className={cn(
+                                "font-black text-base leading-tight mb-1 transition-colors",
+                                activeStep === index ? "text-white" : "text-slate-900 dark:text-white"
                               )}>
-                                {index < activeStep ? (
-                                  <CheckCircle2 size={16} strokeWidth={3} />
-                                ) : point.type === 'start' ? (
-                                  <div className="w-2 h-2 bg-current rounded-full" />
-                                ) : point.type === 'destination' ? (
-                                  <FlagIcon size={14} fill="currentColor" />
-                                ) : (
-                                  <ChevronRight size={14} className={cn(point.type === 'turn-left' && "rotate-180")} strokeWidth={3} />
-                                )}
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <p className={cn(
-                                  "font-black text-base leading-tight mb-1 transition-colors",
-                                  activeStep === index ? "text-white" : "text-slate-900 dark:text-white"
-                                )}>
-                                  {point.instruction}
-                                </p>
-                                <p className={cn(
-                                  "text-[11px] font-black uppercase tracking-[0.1em]",
-                                  activeStep === index ? "text-white/70" : "text-slate-500 dark:text-slate-400"
-                                )}>
-                                  Step {index + 1}
-                                </p>
-                              </div>
-                            </motion.div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={handleClearRoute}
-                        className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                      >
-                        End Navigation
-                      </button>
-                    </div>
-                  ) : (
-                    /* Setup View */
-                    <div className="space-y-8">
-                      {/* Input Fields */}
-                      <div className="space-y-4">
-                        <div className="relative group">
-                          <div className="absolute left-4 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-green-100 flex items-center justify-center text-green-600">
-                            <MapPin size={16} fill="currentColor" className="text-green-600" />
-                          </div>
-                          {currentLocation ? (
-                            <div className="w-full pl-14 pr-12 py-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl font-semibold text-slate-800 dark:text-slate-200 flex items-center justify-between">
-                              <span className="truncate">{currentLocation.name}</span>
-                              <button onClick={() => setCurrentLocation(null)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-slate-400 transition-colors"><X size={16} /></button>
+                                {point.instruction}
+                              </p>
+                              <p className={cn(
+                                "text-[11px] font-black uppercase tracking-[0.1em]",
+                                activeStep === index ? "text-white/70" : "text-slate-500 dark:text-slate-400"
+                              )}>
+                                Step {index + 1}
+                              </p>
                             </div>
-                          ) : (
-                            <div className="grid grid-cols-[1fr,auto] gap-2">
-                              <button
-                                onClick={() => { setSelectorType('origin'); setShowNodeSelector(true); }}
-                                className="w-full pl-14 pr-4 py-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl text-left text-slate-400 font-medium hover:border-indigo-300 dark:hover:border-indigo-500 hover:shadow-md transition-all truncate"
-                              >
-                                Where are you now?
-                              </button>
-                              <button
-                                onClick={() => setShowScanner(true)}
-                                className="w-14 h-full bg-slate-900 text-white rounded-2xl flex items-center justify-center hover:bg-slate-800 transition-colors shadow-lg shadow-slate-900/10"
-                              >
-                                <QrCode size={20} />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="flex justify-center -my-2 relative z-10">
-                          <div className="w-8 h-8 bg-slate-50 rounded-full flex items-center justify-center border border-slate-200 text-slate-400 shadow-sm">
-                            <div className="w-1 h-1 bg-slate-400 rounded-full box-content border-2 border-slate-50" />
-                          </div>
-                        </div>
-
-                        <div className="relative">
-                          <div className="absolute left-4 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600">
-                            <FlagIcon size={16} fill="currentColor" />
-                          </div>
-                          {destination ? (
-                            <div className="w-full pl-14 pr-12 py-4 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-100 dark:border-indigo-800 rounded-2xl font-semibold text-indigo-900 dark:text-indigo-200 flex items-center justify-between">
-                              <span className="truncate">{destination.name}</span>
-                              <button onClick={() => { setDestination(null); setRoute(null); }} className="p-1 hover:bg-indigo-200/50 dark:hover:bg-indigo-800 rounded-full text-indigo-400 transition-colors"><X size={16} /></button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => { setSelectorType('destination'); setShowNodeSelector(true); }}
-                              className="w-full pl-14 pr-4 py-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl text-left text-slate-400 font-medium hover:border-indigo-300 dark:hover:border-indigo-500 hover:shadow-md transition-all truncate"
-                            >
-                              Where do you want to go?
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Suggestions */}
-                      <div className="space-y-3">
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest pl-1">Suggested Destinations</h4>
-                        <div className="flex flex-wrap gap-2">
-                          {selectableNodes.slice(0, 6).map((node, i) => (
-                            <motion.button
-                              initial={{ opacity: 0, scale: 0.9 }}
-                              animate={{ opacity: 1, scale: 1 }}
-                              transition={{ delay: i * 0.05 }}
-                              key={node.id}
-                              onClick={() => {
-                                setDestination(node);
-                                if (currentLocation) {
-                                  calculateRoute(currentLocation.id, node.id);
-                                } else {
-                                  // Prompt for origin if missing
-                                  setSelectorType('origin');
-                                  setShowNodeSelector(true);
-                                }
-                              }}
-                              className="px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-indigo-600 hover:text-white dark:hover:bg-indigo-600 hover:border-indigo-600 hover:shadow-lg hover:shadow-indigo-200 dark:hover:shadow-indigo-900/40 transition-all"
-                            >
-                              {node.name}
-                            </motion.button>
-                          ))}
-                        </div>
+                          </motion.div>
+                        ))}
                       </div>
                     </div>
-                  )}
+
+                    <button
+                      onClick={handleClearRoute}
+                      className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                    >
+                      End Navigation
+                    </button>
+                  </div>
                 </div>
               </motion.div>
             </>
@@ -660,7 +775,9 @@ export default function VenueNavigationPage() {
                       <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
                         <Search size={32} />
                       </div>
-                      <p className="text-slate-500 font-medium">No locations found</p>
+                      <p className="text-slate-500 font-medium">
+                        {selectableNodes.length === 0 ? 'No navigation points available yet' : 'No locations found'}
+                      </p>
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -674,7 +791,7 @@ export default function VenueNavigationPage() {
                           className="w-full p-4 flex items-center gap-4 hover:bg-indigo-50/50 dark:hover:bg-indigo-900/20 rounded-2xl transition-all group border border-transparent hover:border-indigo-100 dark:hover:border-indigo-800"
                         >
                           <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 flex items-center justify-center shrink-0 group-hover:bg-indigo-600 group-hover:text-white transition-colors shadow-sm">
-                            {node.type === 'entrance' ? <MapPin size={20} /> : <StoreIcon size={20} />}
+                            {node.type === 'entrance' ? <MapPin size={20} /> : node.type === 'booth' ? <StoreIcon size={20} /> : <Navigation size={20} />}
                           </div>
                           <div className="text-left flex-1 min-w-0">
                             <div className="font-bold text-slate-900 dark:text-white text-lg leading-tight truncate">{node.name}</div>

@@ -47,9 +47,9 @@ export const VenueForm: React.FC<VenueFormProps> = ({ onVenueCreated }) => {
             setMapUrl('');
             setSelectedFile(null);
             if (fileInputRef.current) fileInputRef.current.value = '';
-        } catch (err) {
-            console.error(err);
-            alert('Failed to create venue');
+        } catch (err: any) {
+            console.error('Failed to create venue:', err);
+            alert(`Failed to create venue: ${err.message || err.toString()}`);
         } finally {
             setLoading(false);
             setUploading(false);
@@ -57,35 +57,35 @@ export const VenueForm: React.FC<VenueFormProps> = ({ onVenueCreated }) => {
     };
 
     return (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-            <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
-                <Plus size={18} className="text-primary-600" />
+        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm p-6">
+            <h3 className="font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+                <Plus size={18} className="text-primary-600 dark:text-primary-400" />
                 Create New Venue
             </h3>
 
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Venue Name</label>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Venue Name</label>
                     <input
                         type="text"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-shadow outline-none"
+                        className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-white rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-shadow outline-none"
                         placeholder="e.g. Main Hall"
                         required
                     />
                 </div>
 
                 <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Floor Plan</label>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Floor Plan</label>
 
                     <div className="space-y-3">
                         {/* File Upload Option */}
                         <div
                             onClick={() => fileInputRef.current?.click()}
                             className={cn(
-                                "border-2 border-dashed border-slate-300 rounded-lg p-4 text-center cursor-pointer transition-colors hover:bg-slate-50 hover:border-primary-400 group",
-                                selectedFile && "border-primary-500 bg-primary-50/50"
+                                "border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-lg p-4 text-center cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-primary-400 dark:hover:border-primary-500 group",
+                                selectedFile && "border-primary-500 dark:border-primary-500 bg-primary-50/50 dark:bg-primary-900/20"
                             )}
                         >
                             <input
@@ -98,14 +98,14 @@ export const VenueForm: React.FC<VenueFormProps> = ({ onVenueCreated }) => {
                             <div className="flex flex-col items-center gap-2">
                                 {selectedFile ? (
                                     <>
-                                        <ImageIcon className="text-primary-600" size={24} />
-                                        <span className="text-sm font-medium text-primary-700 truncate max-w-full px-2">{selectedFile.name}</span>
-                                        <span className="text-xs text-primary-500">Click to change</span>
+                                        <ImageIcon className="text-primary-600 dark:text-primary-400" size={24} />
+                                        <span className="text-sm font-medium text-primary-700 dark:text-primary-300 truncate max-w-full px-2">{selectedFile.name}</span>
+                                        <span className="text-xs text-primary-500 dark:text-primary-400">Click to change</span>
                                     </>
                                 ) : (
                                     <>
-                                        <Upload className="text-slate-400 group-hover:text-primary-500 transition-colors" size={24} />
-                                        <span className="text-sm text-slate-600 group-hover:text-primary-600">Upload image file</span>
+                                        <Upload className="text-slate-400 dark:text-slate-500 group-hover:text-primary-500 transition-colors" size={24} />
+                                        <span className="text-sm text-slate-600 dark:text-slate-400 group-hover:text-primary-600 dark:group-hover:text-primary-400">Upload image file</span>
                                     </>
                                 )}
                             </div>
@@ -113,10 +113,10 @@ export const VenueForm: React.FC<VenueFormProps> = ({ onVenueCreated }) => {
 
                         <div className="relative">
                             <div className="absolute inset-0 flex items-center">
-                                <div className="w-full border-t border-slate-200"></div>
+                                <div className="w-full border-t border-slate-200 dark:border-slate-800"></div>
                             </div>
                             <div className="relative flex justify-center text-xs uppercase">
-                                <span className="bg-white px-2 text-slate-500">Or use demo</span>
+                                <span className="bg-white dark:bg-slate-900 px-2 text-slate-500 dark:text-slate-400">Or use demo</span>
                             </div>
                         </div>
 
@@ -128,7 +128,7 @@ export const VenueForm: React.FC<VenueFormProps> = ({ onVenueCreated }) => {
                                 if (fileInputRef.current) fileInputRef.current.value = '';
                             }}
                             disabled={!!selectedFile}
-                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm bg-white"
+                            className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-white rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm bg-white"
                         >
                             <option value="">Select a demo plan...</option>
                             <option value="/demo/food-hall-floorplan.png">Food Hall Floor Plan</option>
@@ -141,7 +141,7 @@ export const VenueForm: React.FC<VenueFormProps> = ({ onVenueCreated }) => {
                 <button
                     type="submit"
                     disabled={loading || uploading}
-                    className="w-full btn bg-slate-900 text-white hover:bg-slate-800 py-2.5 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full btn bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-slate-100 py-2.5 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     {loading || uploading ? (
                         <>

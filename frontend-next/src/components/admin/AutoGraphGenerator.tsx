@@ -46,61 +46,81 @@ export const AutoGraphGenerator: React.FC<AutoGraphGeneratorProps> = ({ venue, o
                 const boothNodes = analysisResult.nodes.filter((n: any) => n.navNodeType === 'booth');
                 const corridorNodes = analysisResult.nodes.filter((n: any) => n.navNodeType === 'waypoint');
 
-                const createdNodes: Node[] = [];
+                const newNodesPayload = [];
                 const nodeIdMap = new Map<number, string>();
 
-                // Create booths
+                // Create booths payload
                 for (const navNode of boothNodes) {
-                    try {
-                        const node = await nodeApi.create({
-                            venueId: venue.id,
-                            name: navNode.boothName || navNode.name,
-                            type: 'booth',
-                            x: navNode.x,
-                            y: navNode.y,
-                        });
-                        createdNodes.push(node);
-                        nodeIdMap.set(navNode.navNodeId, node.id);
-                    } catch (e) {
-                        console.error("Error creating booth node", e);
-                    }
+                    const id = crypto.randomUUID();
+                    nodeIdMap.set(navNode.navNodeId, id);
+                    newNodesPayload.push({
+                        id,
+                        venueId: venue.id,
+                        name: navNode.boothName || navNode.name,
+                        type: 'booth',
+                        x: navNode.x,
+                        y: navNode.y,
+                    });
                 }
 
-                // Create waypoints
+                // Create waypoints payload
                 for (const navNode of corridorNodes) {
-                    try {
-                        const node = await nodeApi.create({
-                            venueId: venue.id,
-                            name: `Waypoint ${navNode.navNodeId}`,
-                            type: 'intersection',
-                            x: navNode.x,
-                            y: navNode.y,
-                        });
-                        createdNodes.push(node);
-                        nodeIdMap.set(navNode.navNodeId, node.id);
-                    } catch (e) {
-                        console.error("Error creating waypoint node", e);
-                    }
+                    const id = crypto.randomUUID();
+                    nodeIdMap.set(navNode.navNodeId, id);
+                    newNodesPayload.push({
+                        id,
+                        venueId: venue.id,
+                        name: `Waypoint ${navNode.navNodeId}`,
+                        type: 'intersection',
+                        x: navNode.x,
+                        y: navNode.y,
+                    });
                 }
 
-                // 3. Process Edges
-                let edgesCreated = 0;
+                // Call bulk insert
+                console.log(`Sending ${newNodesPayload.length} nodes to batch API...`);
+                let createdNodes: Node[] = [];
+                try {
+                    const res = await nodeApi.createBatch(newNodesPayload as any);
+                    createdNodes = res.nodes;
+                } catch (e: any) {
+                    throw new Error(`Failed to batch create nodes: ${e.message}`);
+                }
+
+                // 3. Process Edges payload
+                const newEdgesPayload = [];
+                const edgeSet = new Set<string>();
+
                 for (const navEdge of analysisResult.edges) {
                     const fromNodeId = nodeIdMap.get(navEdge.fromNodeIndex);
                     const toNodeId = nodeIdMap.get(navEdge.toNodeIndex);
 
                     if (fromNodeId && toNodeId) {
-                        try {
-                            await edgeApi.create({
+                        const key1 = `${fromNodeId}-${toNodeId}`;
+                        const key2 = `${toNodeId}-${fromNodeId}`;
+
+                        if (!edgeSet.has(key1) && !edgeSet.has(key2)) {
+                            newEdgesPayload.push({
                                 venueId: venue.id,
                                 fromNodeId,
                                 toNodeId,
                                 distance: navEdge.distance
                             });
-                            edgesCreated++;
-                        } catch (e) {
-                            // Ignore duplicates
+                            edgeSet.add(key1);
+                            edgeSet.add(key2);
                         }
+                    }
+                }
+
+                // Call bulk edge insert
+                console.log(`Sending ${newEdgesPayload.length} edges to batch API...`);
+                let edgesCreated = 0;
+                if (newEdgesPayload.length > 0) {
+                    try {
+                        const res = await edgeApi.createBatch(newEdgesPayload as any);
+                        edgesCreated = res.count;
+                    } catch (e: any) {
+                        console.error('Failed to batch create edges', e.message);
                     }
                 }
 
